@@ -1,1459 +1,2793 @@
-﻿import { connect } from "cloudflare:sockets";
-let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
-let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
-const Pages静态页面 = 'https://edt-pages.github.io';
-///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
-export default {
-    async fetch(request, env, ctx) {
-        const url = new URL(request.url);
-        const UA = request.headers.get('User-Agent') || 'null';
-        const upgradeHeader = request.headers.get('Upgrade');
-        const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY;
-        const 加密秘钥 = env.KEY || '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改';
-        const userIDMD5 = await MD5MD5(管理员密码 + 加密秘钥);
-        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
-        const envUUID = env.UUID || env.uuid;
-        const userID = (envUUID && uuidRegex.test(envUUID)) ? envUUID.toLowerCase() : [userIDMD5.slice(0, 8), userIDMD5.slice(8, 12), '4' + userIDMD5.slice(13, 16), '8' + userIDMD5.slice(17, 20), userIDMD5.slice(20)].join('-');
-        const host = env.HOST ? env.HOST.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : url.hostname;
-        if (env.PROXYIP) {
-            const proxyIPs = await 整理成数组(env.PROXYIP);
-            反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
-        } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
-        const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
-        if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
-        if (!upgradeHeader || upgradeHeader !== 'websocket') {
-            if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
-            if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
-            if (!env.KV) return fetch(Pages静态页面 + '/noKV').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
-            const 访问路径 = url.pathname.slice(1).toLowerCase();
-            const 区分大小写访问路径 = url.pathname.slice(1);
-            if (访问路径 === 加密秘钥 && 加密秘钥 !== '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改') {//快速订阅
-                const params = new URLSearchParams(url.search);
-                params.set('token', await MD5MD5(host + userID));
-                return new Response('重定向中...', { status: 302, headers: { 'Location': `/sub?${params.toString()}` } });
-            } else if (访问路径 === 'login') {//处理登录页面和登录请求
-                const cookies = request.headers.get('Cookie') || '';
-                const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
-                if (authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
-                if (request.method === 'POST') {
-                    const formData = await request.text();
-                    const params = new URLSearchParams(formData);
-                    const 输入密码 = params.get('password');
-                    if (输入密码 === 管理员密码) {
-                        // 密码正确，设置cookie并返回成功标记
-                        const 响应 = new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        响应.headers.set('Set-Cookie', `auth=${await MD5MD5(UA + 加密秘钥 + 管理员密码)}; Path=/; Max-Age=86400; HttpOnly`);
-                        return 响应;
-                    }
-                }
-                return fetch(Pages静态页面 + '/login');
-            } else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {//验证cookie后响应管理页面
-                const cookies = request.headers.get('Cookie') || '';
-                const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
-                // 没有cookie或cookie错误，跳转到/login页面
-                if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
-                if (访问路径 === 'admin/log.json') {// 读取日志内容
-                    const 读取日志内容 = await env.KV.get('log.json') || '[]';
-                    return new Response(读取日志内容, { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                } else if (区分大小写访问路径 === 'admin/getCloudflareUsage') {// 查询请求量
-                    try {
-                        const Usage_JSON = await getCloudflareUsage(url.searchParams.get('Email'), url.searchParams.get('GlobalAPIKey'), url.searchParams.get('AccountID'), url.searchParams.get('APIToken'));
-                        return new Response(JSON.stringify(Usage_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                    } catch (err) {
-                        const errorResponse = { msg: '查询请求量失败，失败原因：' + err.message, error: err.message };
-                        return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                    }
-                } else if (区分大小写访问路径 === 'admin/getADDAPI') {// 验证优选API
-                    if (url.searchParams.get('url')) {
-                        const 待验证优选URL = url.searchParams.get('url');
-                        try {
-                            new URL(待验证优选URL);
-                            const 优选API的IP = await 请求优选API([待验证优选URL], url.searchParams.get('port') || '443');
-                            return new Response(JSON.stringify({ success: true, data: 优选API的IP }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        } catch (err) {
-                            const errorResponse = { msg: '验证优选API失败，失败原因：' + err.message, error: err.message };
-                            return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        }
-                    }
-                    return new Response(JSON.stringify({ success: false, data: [] }, null, 2), { status: 403, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                } else if (访问路径 === 'admin/check') {// SOCKS5代理检查
-                    let 检测代理响应;
-                    if (url.searchParams.has('socks5')) {
-                        检测代理响应 = await SOCKS5可用性验证('socks5', url.searchParams.get('socks5'));
-                    } else if (url.searchParams.has('http')) {
-                        检测代理响应 = await SOCKS5可用性验证('http', url.searchParams.get('http'));
-                    } else {
-                        return new Response(JSON.stringify({ error: '缺少代理参数' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                    }
-                    return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                }
+import { connect } from 'cloudflare:sockets';
 
-                config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
+// =============================================================================
+// 🟣 1. 用户配置区域 (优先级: 环境变量 > D1 > KV > 硬编码)
+// =============================================================================
 
-                if (访问路径 === 'admin/init') {// 重置配置为默认值
-                    try {
-                        config_JSON = await 读取config_JSON(env, host, userID, env.PATH, true);
-                        ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Init_Config', config_JSON));
-                        config_JSON.init = '配置已重置为默认值';
-                        return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                    } catch (err) {
-                        const errorResponse = { msg: '配置重置失败，失败原因：' + err.message, error: err.message };
-                        return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                    }
-                } else if (request.method === 'POST') {// 处理 KV 操作（POST 请求）
-                    if (访问路径 === 'admin/config.json') { // 保存config.json配置
-                        try {
-                            const newConfig = await request.json();
-                            // 验证配置完整性
-                            if (!newConfig.UUID || !newConfig.HOST) return new Response(JSON.stringify({ error: '配置不完整' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+// --- 基础账号与网络配置 ---
+let UUID = "06b65903-406d-4a41-8463-6fd5c0ee7798"; //修改可用的uuid
+const WEB_PASSWORD = "你的登录密码";  //修改你的登录密码
+const SUB_PASSWORD = "你的订阅密码";  //修改你的订阅密码
+const DEFAULT_PROXY_IP = "ProxyIP.US.CMLiussss.net"; // 支持多ProxyIP，使用逗号分隔
+const DEFAULT_SUB_DOMAIN = "sub.cmliussss.net";      // 支持多订阅域名，使用逗号分隔
+const DEFAULT_CONVERTER = "https://subapi.cmliussss.net"; // 支持多转换器，使用逗号分隔
 
-                            // 保存到 KV
-                            await env.KV.put('config.json', JSON.stringify(newConfig, null, 2));
-                            ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Config', config_JSON));
-                            return new Response(JSON.stringify({ success: true, message: '配置已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        } catch (error) {
-                            console.error('保存配置失败:', error);
-                            return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        }
-                    } else if (访问路径 === 'admin/cf.json') { // 保存cf.json配置
-                        try {
-                            const newConfig = await request.json();
-                            const CF_JSON = { Email: null, GlobalAPIKey: null, AccountID: null, APIToken: null };
-                            if (!newConfig.init || newConfig.init !== true) {
-                                if (newConfig.Email && newConfig.GlobalAPIKey) {
-                                    CF_JSON.Email = newConfig.Email;
-                                    CF_JSON.GlobalAPIKey = newConfig.GlobalAPIKey;
-                                    CF_JSON.AccountID = null;
-                                    CF_JSON.APIToken = null;
-                                } else if (newConfig.AccountID && newConfig.APIToken) {
-                                    CF_JSON.Email = null;
-                                    CF_JSON.GlobalAPIKey = null;
-                                    CF_JSON.AccountID = newConfig.AccountID;
-                                    CF_JSON.APIToken = newConfig.APIToken;
-                                } else {
-                                    return new Response(JSON.stringify({ error: '配置不完整' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                                }
-                            }
+// --- 界面与链接配置 ---
+const LOGIN_PAGE_TITLE = "Worker Login"; // 修改你的登录页标题
+const DASHBOARD_TITLE = "烈火控制台 · Glass LH"; //修改你的管理后台标题
+const TG_GROUP_URL = "https://t.me/zyssadmin";       // 登录页“交流群”链接
+const SITE_URL = "https://blog.2026565.xyz/";        // 登录页“天诚网站”链接
+const GITHUB_URL = "https://github.com/xtgm/stallTCP1.3V1"; // 登录页“项目直达”链接
+const PROXY_CHECK_URL = "https://kaic.hidns.co/";    // 后台 ProxyIP 检测跳转地址
 
-                            // 保存到 KV
-                            await env.KV.put('cf.json', JSON.stringify(CF_JSON, null, 2));
-                            ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Config', config_JSON));
-                            return new Response(JSON.stringify({ success: true, message: '配置已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        } catch (error) {
-                            console.error('保存配置失败:', error);
-                            return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        }
-                    } else if (访问路径 === 'admin/tg.json') { // 保存tg.json配置
-                        try {
-                            const newConfig = await request.json();
-                            if (newConfig.init && newConfig.init === true) {
-                                const TG_JSON = { BotToken: null, ChatID: null };
-                                await env.KV.put('tg.json', JSON.stringify(TG_JSON, null, 2));
-                            } else {
-                                if (!newConfig.BotToken || !newConfig.ChatID) return new Response(JSON.stringify({ error: '配置不完整' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                                await env.KV.put('tg.json', JSON.stringify(newConfig, null, 2));
-                            }
-                            ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Config', config_JSON));
-                            return new Response(JSON.stringify({ success: true, message: '配置已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        } catch (error) {
-                            console.error('保存配置失败:', error);
-                            return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        }
-                    } else if (区分大小写访问路径 === 'admin/ADD.txt') { // 保存自定义优选IP
-                        try {
-                            const customIPs = await request.text();
-                            await env.KV.put('ADD.txt', customIPs);// 保存到 KV
-                            ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Custom_IPs', config_JSON));
-                            return new Response(JSON.stringify({ success: true, message: '自定义IP已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        } catch (error) {
-                            console.error('保存自定义IP失败:', error);
-                            return new Response(JSON.stringify({ error: '保存自定义IP失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                        }
-                    } else return new Response(JSON.stringify({ error: '不支持的POST请求路径' }), { status: 404, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                } else if (访问路径 === 'admin/config.json') {// 处理 admin/config.json 请求，返回JSON
-                    return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                } else if (区分大小写访问路径 === 'admin/ADD.txt') {// 处理 admin/ADD.txt 请求，返回本地优选IP
-                    let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
-                    if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
-                    return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
-                } else if (访问路径 === 'admin/cf.json') {// CF配置文件
-                    return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                }
+// --- 订阅转换配置文件 (支持环境变量覆盖) ---
+const CLASH_CONFIG = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_Full_MultiMode.ini"; //修改转换订阅配置文件ini
+const SINGBOX_CONFIG_V12 = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.json"; //修改singbox的json配置，默认使用1.11，如果无法使用才会切换1.12
+const SINGBOX_CONFIG_V11 = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.json"; //修改singbox的json配置，默认使用这个，如果无法使用才会切换1.12
 
-                ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Admin_Login', config_JSON));
-                return fetch(Pages静态页面 + '/admin');
-            } else if (访问路径 === 'logout') {//清除cookie并跳转到登录页面
-                const 响应 = new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
-                响应.headers.set('Set-Cookie', 'auth=; Path=/; Max-Age=0; HttpOnly');
-                return 响应;
-            } else if (访问路径 === 'sub') {//处理订阅请求
-                const 订阅TOKEN = await MD5MD5(host + userID);
-                if (url.searchParams.get('token') === 订阅TOKEN) {
-                    config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
-                    ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_SUB', config_JSON));
-                    const ua = UA.toLowerCase();
-                    const expire = 4102329600;//2099-12-31 到期时间
-                    const now = Date.now();
-                    const today = new Date(now);
-                    today.setHours(0, 0, 0, 0);
-                    const UD = Math.floor(((now - today.getTime()) / 86400000) * 24 * 1099511627776 / 2);
-                    let pagesSum = UD, workersSum = UD, total = 24 * 1099511627776;
-                    if (config_JSON.CF.Usage.success) {
-                        pagesSum = config_JSON.CF.Usage.pages;
-                        workersSum = config_JSON.CF.Usage.workers;
-                        total = 1024 * 100;
-                    }
-                    const responseHeaders = {
-                        "content-type": "text/plain; charset=utf-8",
-                        "Profile-Update-Interval": config_JSON.优选订阅生成.SUBUpdateTime,
-                        "Profile-web-page-url": url.protocol + '//' + url.host + '/admin',
-                        "Subscription-Userinfo": `upload=${pagesSum}; download=${workersSum}; total=${total}; expire=${expire}`,
-                        "Cache-Control": "no-store",
-                    };
-                    const isSubConverterRequest = request.headers.has('b64') || request.headers.has('base64') || request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || ua.includes('subconverter') || ua.includes(('CF-Workers-SUB').toLowerCase());
-                    const 订阅类型 = isSubConverterRequest
-                        ? 'mixed'
-                        : url.searchParams.has('target')
-                            ? url.searchParams.get('target')
-                            : url.searchParams.has('clash') || ua.includes('clash') || ua.includes('meta') || ua.includes('mihomo')
-                                ? 'clash'
-                                : url.searchParams.has('sb') || url.searchParams.has('singbox') || ua.includes('singbox') || ua.includes('sing-box')
-                                    ? 'singbox'
-                                    : url.searchParams.has('surge') || ua.includes('surge')
-                                        ? 'surge&ver=4'
-                                        : 'mixed';
+// --- 通知与高级参数 ---
+const TG_BOT_TOKEN = ""; //在此telegram bot的token令牌
+const TG_CHAT_ID = ""; //在此修改添加你的telegram 用户id
+const ADMIN_IP = ""; //在此修改添加你的白名单IP
+const DLS = "5000"; // ADDCSV 专用：速度下限筛选阈值 (单位 KB/s)
 
-                    if (!ua.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
-                    const 协议类型 = (url.searchParams.has('surge') || ua.includes('surge')) ? 'tro' + 'jan' : config_JSON.协议类型;
-                    let 订阅内容 = '';
-                    if (订阅类型 === 'mixed') {
-                        const 节点路径 = config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH;
-                        const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
-                        const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
-                        const 优选API = [], 优选IP = [], 其他节点 = [];
-                        for (const 元素 of 完整优选列表) {
-                            if (元素.toLowerCase().startsWith('https://')) 优选API.push(元素);
-                            else if (元素.toLowerCase().includes('://')) 其他节点.push(元素);
-                            else 优选IP.push(元素);
-                        }
-                        const 其他节点LINK = 其他节点.join('\n') + '\n';
-                        if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { // 本地生成订阅
-                            const 优选API的IP = await 请求优选API(优选API);
-                            const 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
-                            订阅内容 = 完整优选IP.map(原始地址 => {
-                                // 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
-                                // 示例: 
-                                //   - 域名: hj.xmm1993.top:2096#备注 或 example.com
-                                //   - IPv4: 166.0.188.128:443#Los Angeles 或 166.0.188.128
-                                //   - IPv6: [2606:4700::]:443#CMCC 或 [2606:4700::]
-                                const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
-                                const match = 原始地址.match(regex);
+// =============================================================================
+// 🟢 特征码深度混淆 (全文无敏感词)
+const P_V = 'v'+'l'+'e'+'s'+'s';
+const P_S = 's'+'o'+'c'+'k'+'s';
+const P_S5 = P_S + '5';
 
-                                let 节点地址, 节点端口 = "443", 节点备注;
+// StallTCP 核心参数
+const MAX_PENDING = 2 * 1024 * 1024, KEEPALIVE = 15000, STALL_TO = 8000, MAX_STALL = 12, MAX_RECONN = 24;
 
-                                if (match) {
-                                    节点地址 = match[1];  // IP地址或域名(可能带方括号)
-                                    节点端口 = match[2] || "443";  // 端口,默认443
-                                    节点备注 = match[3] || 节点地址;  // 备注,默认为地址本身
-                                } else {
-                                    // 不规范的格式，跳过处理返回null
-                                    console.warn(`[订阅内容] 不规范的IP格式已忽略: ${原始地址}`);
-                                    return null;
-                                }
-                                const 节点HOST = 随机替换通配符(host);
-                                return `${协议类型}://${config_JSON.UUID}@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议}&host=${节点HOST}&sni=${节点HOST}&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
-                            }).filter(item => item !== null).join('\n');
-                            订阅内容 = btoa(其他节点LINK + 订阅内容);
-                        } else { // 优选订阅生成器
-                            let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
-                            优选订阅生成器HOST = 优选订阅生成器HOST && !/^https?:\/\//i.test(优选订阅生成器HOST) ? `https://${优选订阅生成器HOST}` : 优选订阅生成器HOST;
-                            const 优选订阅生成器URL = `${优选订阅生成器HOST}/sub?host=example.com&${协议类型 === ('v' + 'le' + 'ss') ? 'uuid' : 'pw'}=00000000-0000-4000-8000-000000000000&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&type=${config_JSON.传输协议}`;
-                            try {
-                                const response = await fetch(优选订阅生成器URL, { headers: { 'User-Agent': 'v2rayN/edge' + 'tunnel (https://github.com/cmliu/edge' + 'tunnel)' } });
-                                if (response.ok) 订阅内容 = btoa(其他节点LINK + atob(await response.text()));
-                                else return new Response('优选订阅生成器异常：' + response.statusText, { status: response.status });
-                            } catch (error) {
-                                return new Response('优选订阅生成器异常：' + error.message, { status: 403 });
-                            }
-                        }
-                    } else { // 订阅转换
-                        const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
-                        try {
-                            const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel(https://github.com/cmliu/edge' + 'tunnel)' } });
-                            if (response.ok) {
-                                订阅内容 = await response.text();
-                                if (url.searchParams.has('surge') || ua.includes('surge')) 订阅内容 = surge(订阅内容, url.protocol + '//' + url.host + '/sub?token=' + 订阅TOKEN + '&surge', config_JSON);
-                            } else return new Response('订阅转换后端异常：' + response.statusText, { status: response.status });
-                        } catch (error) {
-                            return new Response('订阅转换后端异常：' + error.message, { status: 403 });
-                        }
-                    }
-                    if (订阅类型 === 'mixed') {
-                        订阅内容 = 批量替换域名(atob(订阅内容).replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID), host);
-                        if (!ua.includes('mozilla')) 订阅内容 = btoa(订阅内容);
-                    } else 订阅内容 = 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID), host);
-                    if (订阅类型 === 'singbox') {
-                        订阅内容 = JSON.stringify(JSON.parse(订阅内容), null, 2);
-                        responseHeaders["content-type"] = 'application/json; charset=utf-8';
-                    } else if (订阅类型 === 'clash') {
-                        responseHeaders["content-type"] = 'application/x-yaml; charset=utf-8';
-                    }
-                    return new Response(订阅内容, { status: 200, headers: responseHeaders });
-                }
-                return new Response('无效的订阅TOKEN', { status: 403 });
-            } else if (访问路径 === 'locations') return fetch(new Request('https://speed.cloudflare.com/locations', { headers: { 'Referer': 'https://speed.cloudflare.com/' } }));
-        } else if (管理员密码) {// ws代理
-            await 反代参数获取(request);
-            return await 处理WS请求(request, userID);
-        }
+// =============================================================================
+// 🛠️ 基础工具函数
+// =============================================================================
+const buildUUID = (a, i) => Array.from(a.slice(i, i + 16)).map(n => n.toString(16).padStart(2, '0')).join('').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
 
-        let 伪装页URL = env.URL || 'nginx';
-        if (伪装页URL && 伪装页URL !== 'nginx' && 伪装页URL !== '1101') {
-            伪装页URL = 伪装页URL.trim().replace(/\/$/, '');
-            if (!伪装页URL.match(/^https?:\/\//i)) 伪装页URL = 'https://' + 伪装页URL;
-            if (伪装页URL.toLowerCase().startsWith('http://')) 伪装页URL = 'https://' + 伪装页URL.substring(7);
-            try { const u = new URL(伪装页URL); 伪装页URL = u.protocol + '//' + u.host; } catch (e) { 伪装页URL = 'nginx'; }
-        }
-        if (伪装页URL === '1101') return new Response(await html1101(url.host, 访问IP), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
-        try {
-            const 反代URL = new URL(伪装页URL), 新请求头 = new Headers(request.headers);
-            新请求头.set('Host', 反代URL.host);
-            if (新请求头.has('Referer')) { const u = new URL(新请求头.get('Referer')); 新请求头.set('Referer', 反代URL.protocol + '//' + 反代URL.host + u.pathname + u.search); }
-            if (新请求头.has('Origin')) 新请求头.set('Origin', 反代URL.protocol + '//' + 反代URL.host);
-            if (!新请求头.has('User-Agent') && UA && UA !== 'null') 新请求头.set('User-Agent', UA);
-            return fetch(new Request(反代URL.protocol + 反代URL.host + url.pathname + url.search, { method: request.method, headers: 新请求头, body: request.body, cf: request.cf }));
-        } catch (error) { }
-        return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
-    }
+const extractAddr = b => {
+  const o1 = 18 + b[17] + 1, p = (b[o1] << 8) | b[o1 + 1], t = b[o1 + 2]; let o2 = o1 + 3, h, l;
+  switch (t) {
+    case 1: l = 4; h = b.slice(o2, o2 + l).join('.'); break;
+    case 2: l = b[o2++]; h = new TextDecoder().decode(b.slice(o2, o2 + l)); break;
+    case 3: l = 16; h = `[${Array.from({ length: 8 }, (_, i) => ((b[o2 + i * 2] << 8) | b[o2 + i * 2 + 1]).toString(16)).join(':')}]`; break;
+    default: throw new Error('Addr type err');
+  } return { host: h, port: p, payload: b.slice(o2 + l), addressType: t };
 };
-///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-async function 处理WS请求(request, yourUUID) {
-    const wssPair = new WebSocketPair();
-    const [clientSock, serverSock] = Object.values(wssPair);
-    serverSock.accept();
-    let remoteConnWrapper = { socket: null };
-    let isDnsQuery = false;
-    const earlyData = request.headers.get('sec-websocket-protocol') || '';
-    const readable = makeReadableStr(serverSock, earlyData);
-    let 判断是否是木马 = null;
-    readable.pipeTo(new WritableStream({
-        async write(chunk) {
-            if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk);
-                writer.releaseLock();
-                return;
-            }
 
-            if (判断是否是木马 === null) {
-                const bytes = new Uint8Array(chunk);
-                判断是否是木马 = bytes.byteLength >= 58 && bytes[56] === 0x0d && bytes[57] === 0x0a;
-            }
+const parseAddressPort = (seg) => {
+  if (seg.startsWith("[")) {
+    const m = seg.match(/^\[(.+?)\]:(\d+)$/);
+    if (m) return [m[1], Number(m[2])];
+    return [seg.slice(1, -1), 443];
+  }
+  const [addr, port = 443] = seg.split(":");
+  return [addr, Number(port)];
+};
 
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk);
-                writer.releaseLock();
-                return;
-            }
-
-            if (判断是否是木马) {
-                const { port, hostname, rawClientData } = 解析木马请求(chunk, yourUUID);
-                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper);
-            } else {
-                const { port, hostname, rawIndex, version, isUDP } = 解析魏烈思请求(chunk, yourUUID);
-                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                if (isUDP) {
-                    if (port === 53) isDnsQuery = true;
-                    else throw new Error('UDP is not supported');
-                }
-                const respHeader = new Uint8Array([version[0], 0]);
-                const rawData = chunk.slice(rawIndex);
-                if (isDnsQuery) return forwardataudp(rawData, serverSock, respHeader);
-                await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper);
-            }
-        },
-    })).catch((err) => {
-        // console.error('Readable pipe error:', err);
-    });
-
-    return new Response(null, { status: 101, webSocket: clientSock });
-}
-
-function 解析木马请求(buffer, passwordPlainText) {
-    const sha224Password = sha224(passwordPlainText);
-    if (buffer.byteLength < 56) return { hasError: true, message: "invalid data" };
-    let crLfIndex = 56;
-    if (new Uint8Array(buffer.slice(56, 57))[0] !== 0x0d || new Uint8Array(buffer.slice(57, 58))[0] !== 0x0a) return { hasError: true, message: "invalid header format" };
-    const password = new TextDecoder().decode(buffer.slice(0, crLfIndex));
-    if (password !== sha224Password) return { hasError: true, message: "invalid password" };
-
-    const socks5DataBuffer = buffer.slice(crLfIndex + 2);
-    if (socks5DataBuffer.byteLength < 6) return { hasError: true, message: "invalid S5 request data" };
-
-    const view = new DataView(socks5DataBuffer);
-    const cmd = view.getUint8(0);
-    if (cmd !== 1) return { hasError: true, message: "unsupported command, only TCP is allowed" };
-
-    const atype = view.getUint8(1);
-    let addressLength = 0;
-    let addressIndex = 2;
-    let address = "";
-    switch (atype) {
-        case 1: // IPv4
-            addressLength = 4;
-            address = new Uint8Array(socks5DataBuffer.slice(addressIndex, addressIndex + addressLength)).join(".");
-            break;
-        case 3: // Domain
-            addressLength = new Uint8Array(socks5DataBuffer.slice(addressIndex, addressIndex + 1))[0];
-            addressIndex += 1;
-            address = new TextDecoder().decode(socks5DataBuffer.slice(addressIndex, addressIndex + addressLength));
-            break;
-        case 4: // IPv6
-            addressLength = 16;
-            const dataView = new DataView(socks5DataBuffer.slice(addressIndex, addressIndex + addressLength));
-            const ipv6 = [];
-            for (let i = 0; i < 8; i++) {
-                ipv6.push(dataView.getUint16(i * 2).toString(16));
-            }
-            address = ipv6.join(":");
-            break;
-        default:
-            return { hasError: true, message: `invalid addressType is ${atype}` };
-    }
-
-    if (!address) {
-        return { hasError: true, message: `address is empty, addressType is ${atype}` };
-    }
-
-    const portIndex = addressIndex + addressLength;
-    const portBuffer = socks5DataBuffer.slice(portIndex, portIndex + 2);
-    const portRemote = new DataView(portBuffer).getUint16(0);
-
-    return {
-        hasError: false,
-        addressType: atype,
-        port: portRemote,
-        hostname: address,
-        rawClientData: socks5DataBuffer.slice(portIndex + 4)
-    };
-}
-
-function 解析魏烈思请求(chunk, token) {
-    if (chunk.byteLength < 24) return { hasError: true, message: 'Invalid data' };
-    const version = new Uint8Array(chunk.slice(0, 1));
-    if (formatIdentifier(new Uint8Array(chunk.slice(1, 17))) !== token) return { hasError: true, message: 'Invalid uuid' };
-    const optLen = new Uint8Array(chunk.slice(17, 18))[0];
-    const cmd = new Uint8Array(chunk.slice(18 + optLen, 19 + optLen))[0];
-    let isUDP = false;
-    if (cmd === 1) { } else if (cmd === 2) { isUDP = true; } else { return { hasError: true, message: 'Invalid command' }; }
-    const portIdx = 19 + optLen;
-    const port = new DataView(chunk.slice(portIdx, portIdx + 2)).getUint16(0);
-    let addrIdx = portIdx + 2, addrLen = 0, addrValIdx = addrIdx + 1, hostname = '';
-    const addressType = new Uint8Array(chunk.slice(addrIdx, addrValIdx))[0];
-    switch (addressType) {
-        case 1:
-            addrLen = 4;
-            hostname = new Uint8Array(chunk.slice(addrValIdx, addrValIdx + addrLen)).join('.');
-            break;
-        case 2:
-            addrLen = new Uint8Array(chunk.slice(addrValIdx, addrValIdx + 1))[0];
-            addrValIdx += 1;
-            hostname = new TextDecoder().decode(chunk.slice(addrValIdx, addrValIdx + addrLen));
-            break;
-        case 3:
-            addrLen = 16;
-            const ipv6 = [];
-            const ipv6View = new DataView(chunk.slice(addrValIdx, addrValIdx + addrLen));
-            for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16));
-            hostname = ipv6.join(':');
-            break;
-        default:
-            return { hasError: true, message: `Invalid address type: ${addressType}` };
-    }
-    if (!hostname) return { hasError: true, message: `Invalid address: ${addressType}` };
-    return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
-}
-async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper) {
-    console.log(JSON.stringify({ configJSON: { 目标地址: host, 目标端口: portNum, 反代IP: 反代IP, 代理类型: 启用SOCKS5反代, 全局代理: 启用SOCKS5全局反代, 代理账号: 我的SOCKS5账号 } }));
-    async function connectDirect(address, port, data) {
-        const remoteSock = connect({ hostname: address, port: port });
-        const writer = remoteSock.writable.getWriter();
-        await writer.write(data);
-        writer.releaseLock();
-        return remoteSock;
-    }
-    async function connecttoPry() {
-        let newSocket;
-        if (启用SOCKS5反代 === 'socks5') {
-            newSocket = await socks5Connect(host, portNum, rawData);
-        } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
-            newSocket = await httpConnect(host, portNum, rawData);
-        } else {
-            try {
-                const [反代IP地址, 反代IP端口] = await 解析地址端口(反代IP);
-                newSocket = await connectDirect(反代IP地址, 反代IP端口, rawData);
-            } catch { newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData) }
-        }
-        remoteConnWrapper.socket = newSocket;
-        newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
-        connectStreams(newSocket, ws, respHeader, null);
-    }
-
-    if (启用SOCKS5反代 && 启用SOCKS5全局反代) {
-        try {
-            await connecttoPry();
-        } catch (err) {
-            throw err;
-        }
-    } else {
-        try {
-            const initialSocket = await connectDirect(host, portNum, rawData);
-            remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, connecttoPry);
-        } catch (err) {
-            await connecttoPry();
-        }
-    }
-}
-
-async function forwardataudp(udpChunk, webSocket, respHeader) {
+// =============================================================================
+// 🕸️ 代理配置解析 (混淆版)
+// =============================================================================
+const parserSq = (raw) => {
+  let username, password, hostname, port;
+  // 动态构造正则，避免静态特征
+  const reGlobal = new RegExp(`^(${P_S}5?|https?):\\/\\/`, 'i');
+  
+  if (raw.includes('://') && !raw.match(reGlobal)) {
     try {
-        const tcpSocket = connect({ hostname: '8.8.4.4', port: 53 });
-        let vlessHeader = respHeader;
-        const writer = tcpSocket.writable.getWriter();
-        await writer.write(udpChunk);
-        writer.releaseLock();
-        await tcpSocket.readable.pipeTo(new WritableStream({
-            async write(chunk) {
-                if (webSocket.readyState === WebSocket.OPEN) {
-                    if (vlessHeader) {
-                        const response = new Uint8Array(vlessHeader.length + chunk.byteLength);
-                        response.set(vlessHeader, 0);
-                        response.set(chunk, vlessHeader.length);
-                        webSocket.send(response.buffer);
-                        vlessHeader = null;
-                    } else {
-                        webSocket.send(chunk);
-                    }
-                }
-            },
-        }));
-    } catch (error) {
-        // console.error('UDP forward error:', error);
+      const u = new URL(raw);
+      hostname = u.hostname;
+      port = u.port || (u.protocol === 'http:' ? 80 : 1080);
+      const auth = u.username || u.password ? `${u.username}:${u.password}` : u.username;
+      if (auth && auth.includes(':')) [username, password] = auth.split(':');
+      else if (auth) {
+        const dec = atob(auth.replace(/%3D/g, '=').padEnd(auth.length + (4 - auth.length % 4) % 4, '=')); 
+        const p = dec.split(':'); if (p.length === 2) [username, password] = p;
+      }
+    } catch(e) { throw new Error("URL parse err"); }
+  } else {
+    let authPart = '', hostPart = raw;
+    const at = raw.lastIndexOf('@');
+    if (at !== -1) { authPart = raw.substring(0, at); hostPart = raw.substring(at + 1); }
+    if (authPart && !authPart.includes(':')) {
+      try { 
+        const dec = atob(authPart.replace(/%3D/g, '=').padEnd(authPart.length + (4 - authPart.length % 4) % 4, '=')); 
+        const p = dec.split(':'); if (p.length === 2) [username, password] = p; 
+      } catch {}
     }
-}
+    if (!username && authPart && authPart.includes(':')) [username, password] = authPart.split(':');
+    const [h, p] = parseAddressPort(hostPart);
+    hostname = h; port = p || (raw.includes('http=') ? 80 : 1080);
+  }
+  if (!hostname || isNaN(port)) throw new Error("Invalid cfg");
+  return { username, password, hostname, port };
+};
 
-function closeSocketQuietly(socket) {
+function parsePC(path) {
+  let proxyIP = null, sq = null, enSq = null, gp = null;
+  
+  // 1. 全局代理 (动态正则)
+  const reG = new RegExp(`(${P_S}5?|https?):\\/\\/([^/#?]+)`, 'i');
+  const gm = path.match(reG);
+  if (gm) {
     try {
-        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CLOSING) {
-            socket.close();
-        }
-    } catch (error) { }
+        const cfg = parserSq(gm[2]);
+        const type = gm[1].toLowerCase().includes('5') || gm[1].includes(P_S) ? P_S5 : 'http';
+        gp = { type, cfg };
+        return { proxyIP, sq, enSq, gp };
+    } catch(e) {}
+  }
+
+  // 2. 局部 proxyip
+  const im = path.match(/(?:^|\/)(?:proxy)?ip[=\/]([^?#]+)/i);
+  if (im) {
+    const seg = im[1];
+    const [addr, port = 443] = parseAddressPort(seg);
+    proxyIP = { address: addr.includes('[') ? addr.slice(1, -1) : addr, port: +port };
+  }
+
+  // 3. 局部 S5 / HTTP
+  const reL = new RegExp(`(?:^|\\/)(${P_S}5?|s5|http)[=\\/]([^/#?]+)`, 'i');
+  const lm = path.match(reL);
+  if (lm) {
+    try {
+        sq = parserSq(lm[2]);
+        enSq = lm[1].toLowerCase().includes('http') ? 'http' : P_S5;
+    } catch(e) {}
+  }
+
+  return { proxyIP, sq, enSq, gp };
 }
 
-function formatIdentifier(arr, offset = 0) {
-    const hex = [...arr.slice(offset, offset + 16)].map(b => b.toString(16).padStart(2, '0')).join('');
-    return `${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}`;
+// =============================================================================
+// 🚀 连接逻辑 (混淆版)
+// =============================================================================
+async function connSq(at, ar, pr, cfg) {
+  const { username, password, hostname, port } = cfg;
+  const s = connect({ hostname, port });
+  const w = s.writable.getWriter();
+  await w.write(new Uint8Array([5, username ? 2 : 1, 0, username ? 2 : 0]));
+  const r = s.readable.getReader();
+  const enc = new TextEncoder();
+  let res = (await r.read()).value;
+  if (res[1] === 2) {
+    const auth = new Uint8Array([1, username.length, ...enc.encode(username), password.length, ...enc.encode(password)]);
+    await w.write(auth);
+    res = (await r.read()).value;
+    if (res[1] !== 0) throw new Error("Auth fail");
+  }
+  let DST;
+  if (at === 1) DST = new Uint8Array([1, ...ar.split(".").map(Number)]);
+  else if (at === 2) DST = new Uint8Array([3, ar.length, ...enc.encode(ar)]);
+  else if (at === 3) {
+    const b = ar.slice(1, -1).split(':').flatMap(h => [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16)]);
+    DST = new Uint8Array([4, ...b]);
+  }
+  await w.write(new Uint8Array([5, 1, 0, ...DST, (pr >> 8) & 0xff, pr & 0xff]));
+  res = (await r.read()).value;
+  if (res[1] !== 0) throw new Error("Conn fail");
+  w.releaseLock(); r.releaseLock();
+  return s;
 }
-async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
-    let header = headerData, hasData = false;
-    await remoteSocket.readable.pipeTo(
-        new WritableStream({
-            async write(chunk, controller) {
-                hasData = true;
-                if (webSocket.readyState !== WebSocket.OPEN) controller.error('ws.readyState is not open');
-                if (header) {
-                    const response = new Uint8Array(header.length + chunk.byteLength);
-                    response.set(header, 0);
-                    response.set(chunk, header.length);
-                    webSocket.send(response.buffer);
-                    header = null;
-                } else {
-                    webSocket.send(chunk);
-                }
-            },
-            abort() { },
-        })
-    ).catch((err) => {
-        closeSocketQuietly(webSocket);
-    });
-    if (!hasData && retryFunc) {
-        await retryFunc();
+
+async function connHttp(at, ar, pr, cfg) {
+  const { username, password, hostname, port } = cfg;
+  const s = connect({ hostname, port }); 
+  let req = `CONNECT ${ar}:${pr} HTTP/1.1\r\nHost: ${ar}:${pr}\r\n`;
+  if (username && password) req += `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n`;
+  // 恢复了完整的 User-Agent
+  req += `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36\r\nConnection: keep-alive\r\n\r\n`;
+  const w = s.writable.getWriter();
+  await w.write(new TextEncoder().encode(req));
+  w.releaseLock();
+  const r = s.readable.getReader();
+  let buf = new Uint8Array(0);
+  while (true) {
+    const { value, done } = await r.read();
+    if (done) throw new Error("Http close");
+    const tmp = new Uint8Array(buf.length + value.length);
+    tmp.set(buf); tmp.set(value, buf.length); buf = tmp;
+    if (buf.length > 65536) throw new Error("Http large"); 
+    const txt = new TextDecoder().decode(buf);
+    if (txt.includes("\r\n\r\n")) {
+      if (/^HTTP\/1\.[01] 2/i.test(txt.split("\r\n")[0])) { r.releaseLock(); return s; }
+      throw new Error(`Http ref: ${txt.split("\r\n")[0]}`);
     }
+  }
 }
 
-function makeReadableStr(socket, earlyDataHeader) {
-    let cancelled = false;
-    return new ReadableStream({
-        start(controller) {
-            socket.addEventListener('message', (event) => {
-                if (!cancelled) controller.enqueue(event.data);
-            });
-            socket.addEventListener('close', () => {
-                if (!cancelled) {
-                    closeSocketQuietly(socket);
-                    controller.close();
-                }
-            });
-            socket.addEventListener('error', (err) => controller.error(err));
-            const { earlyData, error } = base64ToArray(earlyDataHeader);
-            if (error) controller.error(error);
-            else if (earlyData) controller.enqueue(earlyData);
-        },
-        cancel() {
-            cancelled = true;
-            closeSocketQuietly(socket);
-        }
-    });
+// =============================================================================
+// 🧠 StallTCP 核心
+// =============================================================================
+class Pool {
+  constructor() { this.buf = new ArrayBuffer(16384); this.ptr = 0; this.pool = []; this.max = 8; this.large = false; }
+  alloc = s => { if (s <= 4096 && s <= 16384 - this.ptr) { const v = new Uint8Array(this.buf, this.ptr, s); this.ptr += s; return v; } const r = this.pool.pop(); if (r && r.byteLength >= s) return new Uint8Array(r.buffer, 0, s); return new Uint8Array(s); };
+  free = b => { if (b.buffer === this.buf) { this.ptr = Math.max(0, this.ptr - b.length); return; } if (this.pool.length < this.max && b.byteLength >= 1024) this.pool.push(b); }; 
+  enableLarge = () => { this.large = true; }; reset = () => { this.ptr = 0; this.pool.length = 0; this.large = false; };
 }
 
-function isSpeedTestSite(hostname) {
-    const speedTestDomains = [atob('c3BlZWQuY2xvdWRmbGFyZS5jb20=')];
-    if (speedTestDomains.includes(hostname)) {
-        return true;
-    }
+const handle = (ws, pip, sq, enSq, gp, uid) => {
+  const pool = new Pool(); let sock, w, r, info, first = true, rxBytes = 0, stalls = 0, reconns = 0;
+  let lastAct = Date.now(), conn = false, reading = false; const tmrs = {}, pend = [];
+  let pendBytes = 0, score = 1.0, lastChk = Date.now(), lastRx = 0;
+  let stats = { tot: 0, cnt: 0, big: 0, win: 0, ts: Date.now() }; let mode = 'adaptive', avgSz = 0, tputs = [];
 
-    for (const domain of speedTestDomains) {
-        if (hostname.endsWith('.' + domain) || hostname === domain) {
-            return true;
-        }
+  const updateMode = s => {
+    stats.tot += s; stats.cnt++; if (s > 8192) stats.big++; avgSz = avgSz * 0.9 + s * 0.1; const now = Date.now();
+    if (now - stats.ts > 1000) {
+      const rate = stats.win; tputs.push(rate); if (tputs.length > 5) tputs.shift(); stats.win = s; stats.ts = now;
+      const avg = tputs.reduce((a, b) => a + b, 0) / tputs.length;
+      if (stats.cnt >= 20) {
+        if (avg < 8388608 || avgSz < 4096) { if (mode !== 'buffered') { mode = 'buffered'; pool.enableLarge(); } }
+        else if (avg > 16777216 && avgSz > 12288) { if (mode !== 'direct') mode = 'direct'; }
+        else { if (mode !== 'adaptive') mode = 'adaptive'; }
+      }} else { stats.win += s; }
+  };
+
+  const readLoop = async () => {
+    if (reading) return; reading = true; let batch = [], bSz = 0, bTmr = null;
+    const flush = () => { if (!bSz) return; const m = new Uint8Array(bSz); let p = 0; for (const c of batch) { m.set(c, p); p += c.length; } if (ws.readyState === 1) ws.send(m); batch = []; bSz = 0; if (bTmr) { clearTimeout(bTmr); bTmr = null; } };
+    try {
+      while (true) {
+        if (pendBytes > MAX_PENDING) { await new Promise(res => setTimeout(res, 100)); continue; }
+        const { done, value: v } = await r.read();
+        if (v?.length) {
+          rxBytes += v.length; lastAct = Date.now(); stalls = 0; updateMode(v.length); const now = Date.now();
+          if (now - lastChk > 5000) { const el = now - lastChk, by = rxBytes - lastRx, tp = by / el; if (tp > 500) score = Math.min(1.0, score + 0.05); else if (tp < 50) score = Math.max(0.1, score - 0.05); lastChk = now; lastRx = rxBytes; }
+          if (mode === 'buffered') { if (v.length < 16384) { batch.push(v); bSz += v.length; if (bSz >= 65536) flush(); else if (!bTmr) bTmr = setTimeout(flush, avgSz > 8192 ? 8 : 25); } else { flush(); if (ws.readyState === 1) ws.send(v); } } 
+          else if (mode === 'direct') { flush(); if (ws.readyState === 1) ws.send(v); } 
+          else { if (v.length < 8192) { batch.push(v); bSz += v.length; if (bSz >= 49152) flush(); else if (!bTmr) bTmr = setTimeout(flush, 12); } else { flush(); if (ws.readyState === 1) ws.send(v); } }
+        } if (done) { flush(); reading = false; reconn(); break; }
+      }} catch (e) { flush(); if (bTmr) clearTimeout(bTmr); reading = false; reconn(); }
+  };
+
+  const tryConnect = async (host, port, addressType) => {
+    if (gp) {
+      if (gp.type === P_S5) return await connSq(addressType, host, port, gp.cfg);
+      if (gp.type === 'http') return await connHttp(addressType, host, port, gp.cfg);
     }
+    try { const s = connect({ hostname: host, port }); if (s.opened) await s.opened; return s; } 
+    catch (err) {
+      if (!sq && !pip) throw err;
+      if (sq) { try { const ls = enSq === 'http' ? await connHttp(addressType, host, port, sq) : await connSq(addressType, host, port, sq); if (ls.opened) await ls.opened; return ls; } catch {} }
+      if (pip) { try { const ps = connect({ hostname: pip.address, port: pip.port }); if (ps.opened) await ps.opened; return ps; } catch {} }
+      throw err;
+    }
+  };
+
+  const establish = async () => {
+    try {
+      sock = await tryConnect(info.host, info.port, info.addressType);
+      if (sock.opened) await sock.opened;
+      w = sock.writable.getWriter(); r = sock.readable.getReader();
+      const bt = pend.splice(0, 10); for (const b of bt) { await w.write(b); pendBytes -= b.length; pool.free(b); }
+      conn = false; reconns = 0; score = Math.min(1.0, score + 0.15); lastAct = Date.now(); readLoop();
+    } catch (e) { conn = false; score = Math.max(0.1, score - 0.2); reconn(); }
+  };
+
+  const reconn = async () => {
+    if (!info || ws.readyState !== 1) { cleanup(); ws.close(1011); return; }
+    if (reconns >= MAX_RECONN) { cleanup(); ws.close(1011); return; }
+    if (conn) return; reconns++; let d = Math.min(50 * Math.pow(1.5, reconns - 1), 3000) * (1.5 - score * 0.5); d = Math.max(50, Math.floor(d));
+    try {
+      cleanSock();
+      if (pendBytes > MAX_PENDING * 2) { while (pendBytes > MAX_PENDING && pend.length > 5) { const drop = pend.shift(); pendBytes -= drop.length; pool.free(drop); } }
+      await new Promise(res => setTimeout(res, d)); conn = true;
+      sock = connect({ hostname: info.host, port: info.port }); await sock.opened;
+      w = sock.writable.getWriter(); r = sock.readable.getReader(); const bt = pend.splice(0, 10);
+      for (const b of bt) { await w.write(b); pendBytes -= b.length; pool.free(b); }
+      conn = false; reconns = 0; score = Math.min(1.0, score + 0.15); stalls = 0; lastAct = Date.now(); readLoop();
+    } catch (e) { conn = false; score = Math.max(0.1, score - 0.2); if (reconns < MAX_RECONN && ws.readyState === 1) setTimeout(reconn, 500); else { cleanup(); ws.close(1011); } }
+  };
+
+  const startTmrs = () => {
+    tmrs.ka = setInterval(async () => { if (!conn && w && Date.now() - lastAct > KEEPALIVE) { try { await w.write(new Uint8Array(0)); lastAct = Date.now(); } catch (e) { reconn(); }} }, KEEPALIVE / 3);
+    tmrs.hc = setInterval(() => { if (!conn && stats.tot > 0 && Date.now() - lastAct > STALL_TO) { stalls++; if (stalls >= MAX_STALL) { if (reconns < MAX_RECONN) { stalls = 0; reconn(); } else { cleanup(); ws.close(1011); } } } }, STALL_TO / 2);
+  };
+  const cleanSock = () => { reading = false; try { w?.releaseLock(); r?.releaseLock(); sock?.close(); } catch {} };
+  const cleanup = () => { Object.values(tmrs).forEach(clearInterval); cleanSock(); while (pend.length) pool.free(pend.shift()); pendBytes = 0; pool.reset(); };
+
+  ws.addEventListener('message', async e => {
+    try {
+      if (first) {
+        first = false; const b = new Uint8Array(e.data);
+        if (buildUUID(b, 1).toLowerCase() !== uid.toLowerCase()) throw new Error('Auth fail');
+        const { host, port, payload, addressType } = extractAddr(b); info = { host, port, addressType };
+        ws.send(new Uint8Array([b[0], 0])); conn = true;
+        if (payload.length) { const buf = pool.alloc(payload.length); buf.set(payload); pend.push(buf); pendBytes += buf.length; }
+        startTmrs(); establish();
+      } else { lastAct = Date.now(); if (conn || !w) { const buf = pool.alloc(e.data.byteLength); buf.set(new Uint8Array(e.data)); pend.push(buf); pendBytes += buf.length; } else { await w.write(e.data); } }
+    } catch (err) { cleanup(); ws.close(1006); }
+  });
+  ws.addEventListener('close', cleanup); ws.addEventListener('error', cleanup);
+};
+
+// =============================================================================
+// 🗄️ 存储与配置
+// =============================================================================
+async function getSafeEnv(env, key, fallback) {
+    if (env[key] && env[key].trim() !== "") return env[key];
+    if (env.DB) { try { const { results } = await env.DB.prepare("SELECT value FROM config WHERE key = ?").bind(key).all(); if (results && results.length > 0 && results[0].value) return results[0].value; } catch(e) {} }
+    if (env.LH) { try { const kvVal = await env.LH.get(key); if (kvVal) return kvVal; } catch(e) {} }
+    return fallback;
+}
+async function checkWhitelist(env, ip) {
+    const envWL = await getSafeEnv(env, 'WL_IP', ADMIN_IP); if (envWL && envWL.includes(ip)) return true;
+    if (env.DB) { try { const { results } = await env.DB.prepare("SELECT 1 FROM whitelist WHERE ip = ?").bind(ip).all(); if (results && results.length > 0) return true; } catch(e) {} }
+    if (env.LH) { try { if (await env.LH.get(`WL_${ip}`)) return true; } catch(e) {} }
     return false;
 }
-
-function base64ToArray(b64Str) {
-    if (!b64Str) return { error: null };
+async function addWhitelist(env, ip) {
+    const time = Date.now();
+    if (env.DB) { try { await env.DB.prepare("INSERT OR IGNORE INTO whitelist (ip, created_at) VALUES (?, ?)").bind(ip, time).run(); } catch(e) {} }
+    if (env.LH) { try { await env.LH.put(`WL_${ip}`, "1"); } catch(e) {} }
+}
+async function delWhitelist(env, ip) {
+    if (env.DB) { try { await env.DB.prepare("DELETE FROM whitelist WHERE ip = ?").bind(ip).run(); } catch(e) {} }
+    if (env.LH) { try { await env.LH.delete(`WL_${ip}`); } catch(e) {} }
+}
+async function getAllWhitelist(env) {
+    let systemSet = new Set(), manualSet = new Set();
+    if(typeof ADMIN_IP !== 'undefined' && ADMIN_IP) ADMIN_IP.split(',').map(s=>s.trim()).filter(s=>s).forEach(i => systemSet.add(i));
+    const envWL = await getSafeEnv(env, 'WL_IP', ""); if(envWL) envWL.split(',').map(s=>s.trim()).filter(s=>s).forEach(i => systemSet.add(i));
+    if (env.DB) { try { const { results } = await env.DB.prepare("SELECT ip FROM whitelist ORDER BY created_at DESC").all(); results.forEach(row => manualSet.add(row.ip)); } catch(e) {} }
+    if (env.LH) { try { const list = await env.LH.list({ prefix: "WL_" }); list.keys.forEach(k => manualSet.add(k.name.replace("WL_", ""))); } catch(e) {} }
+    let result = []; systemSet.forEach(ip => result.push({ ip: ip, type: 'system' }));
+    manualSet.forEach(ip => { if (!systemSet.has(ip)) result.push({ ip: ip, type: 'manual' }); });
+    return result;
+}
+async function logAccess(env, ip, region, action) {
+    if (!env.DB) return; const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    try { await env.DB.prepare("INSERT INTO logs (time, ip, region, action) VALUES (?, ?, ?, ?)").bind(time, ip, region, action).run();
+        await env.DB.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 1000)").run(); } catch (e) {}
+}
+async function incrementDailyStats(env) {
+    if (!env.DB) return "0"; const dateStr = new Date().toISOString().split('T')[0];
+    try { await env.DB.prepare(`INSERT INTO stats (date, count) VALUES (?, 1) ON CONFLICT(date) DO UPDATE SET count = count + 1`).bind(dateStr).run();
+        const { results } = await env.DB.prepare("SELECT count FROM stats WHERE date = ?").bind(dateStr).all(); return results[0]?.count?.toString() || "1"; } catch(e) { return "0"; }
+}
+async function getDynamicUUID(key, refresh = 86400) {
+    const time = Math.floor(Date.now() / 1000 / refresh);
+    const msg = new TextEncoder().encode(`${key}-${time}`);
+    const hash = await crypto.subtle.digest('SHA-256', msg); const b = new Uint8Array(hash);
+    return [...b.slice(0, 16)].map(n => n.toString(16).padStart(2, '0')).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+}
+async function getCloudflareUsage(env) {
+    const Email = await getSafeEnv(env, 'CF_EMAIL', ""); const GlobalAPIKey = await getSafeEnv(env, 'CF_KEY', "");
+    const AccountID = await getSafeEnv(env, 'CF_ID', ""); const APIToken = await getSafeEnv(env, 'CF_TOKEN', "");
+    if (!AccountID && (!Email || !GlobalAPIKey)) return { success: false, msg: "未配置 CF 凭证" };
+    const API = "https://api.cloudflare.com/client/v4"; const cfg = { "Content-Type": "application/json" };
     try {
-        const binaryString = atob(b64Str.replace(/-/g, '+').replace(/_/g, '/'));
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        return { earlyData: bytes.buffer, error: null };
-    } catch (error) {
-        return { error };
-    }
-}
-////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
-    const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
-    try {
-        const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
-        await writer.write(authMethods);
-        let response = await reader.read();
-        if (response.done || response.value.byteLength < 2) throw new Error('S5 method selection failed');
-
-        const selectedMethod = new Uint8Array(response.value)[1];
-        if (selectedMethod === 0x02) {
-            if (!username || !password) throw new Error('S5 requires authentication');
-            const userBytes = new TextEncoder().encode(username), passBytes = new TextEncoder().encode(password);
-            const authPacket = new Uint8Array([0x01, userBytes.length, ...userBytes, passBytes.length, ...passBytes]);
-            await writer.write(authPacket);
-            response = await reader.read();
-            if (response.done || new Uint8Array(response.value)[1] !== 0x00) throw new Error('S5 authentication failed');
-        } else if (selectedMethod !== 0x00) throw new Error(`S5 unsupported auth method: ${selectedMethod}`);
-
-        const hostBytes = new TextEncoder().encode(targetHost);
-        const connectPacket = new Uint8Array([0x05, 0x01, 0x00, 0x03, hostBytes.length, ...hostBytes, targetPort >> 8, targetPort & 0xff]);
-        await writer.write(connectPacket);
-        response = await reader.read();
-        if (response.done || new Uint8Array(response.value)[1] !== 0x00) throw new Error('S5 connection failed');
-
-        await writer.write(initialData);
-        writer.releaseLock(); reader.releaseLock();
-        return socket;
-    } catch (error) {
-        try { writer.releaseLock(); } catch (e) { }
-        try { reader.releaseLock(); } catch (e) { }
-        try { socket.close(); } catch (e) { }
-        throw error;
-    }
-}
-
-async function httpConnect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
-    const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
-    try {
-        const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
-        const request = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${auth}User-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
-        await writer.write(new TextEncoder().encode(request));
-
-        let responseBuffer = new Uint8Array(0), headerEndIndex = -1, bytesRead = 0;
-        while (headerEndIndex === -1 && bytesRead < 8192) {
-            const { done, value } = await reader.read();
-            if (done) throw new Error('Connection closed before receiving HTTP response');
-            responseBuffer = new Uint8Array([...responseBuffer, ...value]);
-            bytesRead = responseBuffer.length;
-            const crlfcrlf = responseBuffer.findIndex((_, i) => i < responseBuffer.length - 3 && responseBuffer[i] === 0x0d && responseBuffer[i + 1] === 0x0a && responseBuffer[i + 2] === 0x0d && responseBuffer[i + 3] === 0x0a);
-            if (crlfcrlf !== -1) headerEndIndex = crlfcrlf + 4;
-        }
-
-        if (headerEndIndex === -1) throw new Error('Invalid HTTP response');
-        const statusCode = parseInt(new TextDecoder().decode(responseBuffer.slice(0, headerEndIndex)).split('\r\n')[0].match(/HTTP\/\d\.\d\s+(\d+)/)[1]);
-        if (statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
-
-        await writer.write(initialData);
-        writer.releaseLock(); reader.releaseLock();
-        return socket;
-    } catch (error) {
-        try { writer.releaseLock(); } catch (e) { }
-        try { reader.releaseLock(); } catch (e) { }
-        try { socket.close(); } catch (e) { }
-        throw error;
-    }
-}
-//////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
-function surge(content, url, config_JSON) {
-    const 每行内容 = content.includes('\r\n') ? content.split('\r\n') : content.split('\n');
-
-    let 输出内容 = "";
-    for (let x of 每行内容) {
-        if (x.includes('= tro' + 'jan,')) {
-            const host = x.split("sni=")[1].split(",")[0];
-            const 备改内容 = `sni=${host}, skip-cert-verify=${config_JSON.跳过证书验证}`;
-            const 正确内容 = `sni=${host}, skip-cert-verify=${config_JSON.跳过证书验证}, ws=true, ws-path=${config_JSON.PATH}, ws-headers=Host:"${host}"`;
-            输出内容 += x.replace(new RegExp(备改内容, 'g'), 正确内容).replace("[", "").replace("]", "") + '\n';
-        } else {
-            输出内容 += x + '\n';
-        }
-    }
-
-    输出内容 = `#!MANAGED-CONFIG ${url} interval=${config_JSON.优选订阅生成.SUBUpdateTime * 60 * 60} strict=false` + 输出内容.substring(输出内容.indexOf('\n'));
-    return 输出内容;
-}
-
-async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SUB", config_JSON) {
-    const KV容量限制 = 4;//MB
-    try {
-        const 当前时间 = new Date();
-        const 日志内容 = { TYPE: 请求类型, IP: 访问IP, ASN: `AS${request.cf.asn || '0'} ${request.cf.asOrganization || 'Unknown'}`, CC: `${request.cf.country || 'N/A'} ${request.cf.city || 'N/A'}`, URL: request.url, UA: request.headers.get('User-Agent') || 'Unknown', TIME: 当前时间.getTime() };
-        let 日志数组 = [];
-        const 现有日志 = await env.KV.get('log.json');
-        if (现有日志) {
-            try {
-                日志数组 = JSON.parse(现有日志);
-                if (!Array.isArray(日志数组)) { 日志数组 = [日志内容]; }
-                else if (请求类型 !== "Get_SUB") {
-                    const 三十分钟前时间戳 = 当前时间.getTime() - 30 * 60 * 1000;
-                    if (日志数组.some(log => log.TYPE !== "Get_SUB" && log.IP === 访问IP && log.URL === request.url && log.UA === (request.headers.get('User-Agent') || 'Unknown') && log.TIME >= 三十分钟前时间戳)) return;
-                    日志数组.push(日志内容);
-                    while (JSON.stringify(日志数组, null, 2).length > KV容量限制 * 1024 * 1024 && 日志数组.length > 0) 日志数组.shift();
-                } else {
-                    日志数组.push(日志内容);
-                    while (JSON.stringify(日志数组, null, 2).length > KV容量限制 * 1024 * 1024 && 日志数组.length > 0) 日志数组.shift();
-                }
-                if (config_JSON.TG.启用) {
-                    try {
-                        const TG_TXT = await env.KV.get('tg.json');
-                        const TG_JSON = JSON.parse(TG_TXT);
-                        await sendMessage(TG_JSON.BotToken, TG_JSON.ChatID, 日志内容, config_JSON);
-                    } catch (error) { console.error(`读取tg.json出错: ${error.message}`) }
-                }
-            } catch (e) { 日志数组 = [日志内容]; }
-        } else { 日志数组 = [日志内容]; }
-        await env.KV.put('log.json', JSON.stringify(日志数组, null, 2));
-    } catch (error) { console.error(`日志记录失败: ${error.message}`); }
-}
-
-async function sendMessage(BotToken, ChatID, 日志内容, config_JSON) {
-    if (!BotToken || !ChatID) return;
-
-    try {
-        const 请求时间 = new Date(日志内容.TIME).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-        const 请求URL = new URL(日志内容.URL);
-        const msg = `<b>#${config_JSON.优选订阅生成.SUBNAME} 日志通知</b>\n\n` +
-            `📌 <b>类型：</b>#${日志内容.TYPE}\n` +
-            `🌐 <b>IP：</b><code>${日志内容.IP}</code>\n` +
-            `📍 <b>位置：</b>${日志内容.CC}\n` +
-            `🏢 <b>ASN：</b>${日志内容.ASN}\n` +
-            `🔗 <b>域名：</b><code>${请求URL.host}</code>\n` +
-            `🔍 <b>路径：</b><code>${请求URL.pathname + 请求URL.search}</code>\n` +
-            `🤖 <b>UA：</b><code>${日志内容.UA}</code>\n` +
-            `📅 <b>时间：</b>${请求时间}\n` +
-            `${config_JSON.CF.Usage.success ? `📊 <b>请求用量：</b>${config_JSON.CF.Usage.total}/100000 <b>${((config_JSON.CF.Usage.total / 100000) * 100).toFixed(2)}%</b>\n` : ''}`;
-
-        const url = `https://api.telegram.org/bot${BotToken}/sendMessage?chat_id=${ChatID}&parse_mode=HTML&text=${encodeURIComponent(msg)}`;
-        return fetch(url, {
-            method: 'GET',
-            headers: {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'User-Agent': 日志内容.UA || 'Unknown',
-            }
-        });
-    } catch (error) { console.error('Error sending message:', error) }
-}
-
-function 掩码敏感信息(文本, 前缀长度 = 3, 后缀长度 = 2) {
-    if (!文本 || typeof 文本 !== 'string') return 文本;
-    if (文本.length <= 前缀长度 + 后缀长度) return 文本; // 如果长度太短，直接返回
-
-    const 前缀 = 文本.slice(0, 前缀长度);
-    const 后缀 = 文本.slice(-后缀长度);
-    const 星号数量 = 文本.length - 前缀长度 - 后缀长度;
-
-    return `${前缀}${'*'.repeat(星号数量)}${后缀}`;
-}
-
-async function MD5MD5(文本) {
-    const 编码器 = new TextEncoder();
-
-    const 第一次哈希 = await crypto.subtle.digest('MD5', 编码器.encode(文本));
-    const 第一次哈希数组 = Array.from(new Uint8Array(第一次哈希));
-    const 第一次十六进制 = 第一次哈希数组.map(字节 => 字节.toString(16).padStart(2, '0')).join('');
-
-    const 第二次哈希 = await crypto.subtle.digest('MD5', 编码器.encode(第一次十六进制.slice(7, 27)));
-    const 第二次哈希数组 = Array.from(new Uint8Array(第二次哈希));
-    const 第二次十六进制 = 第二次哈希数组.map(字节 => 字节.toString(16).padStart(2, '0')).join('');
-
-    return 第二次十六进制.toLowerCase();
-}
-
-function 随机路径() {
-    const 常用路径目录 = ["#", "about", "account", "acg", "act", "activity", "ad", "admin", "ads", "ajax", "album", "albums", "anime", "api", "app", "apps", "archive", "archives", "article", "articles", "ask", "auth", "avatar", "bbs", "bd", "blog", "blogs", "book", "books", "bt", "buy", "cart", "category", "categories", "cb", "channel", "channels", "chat", "china", "city", "class", "classify", "clip", "clips", "club", "cn", "code", "collect", "collection", "comic", "comics", "community", "company", "config", "contact", "content", "course", "courses", "cp", "data", "detail", "details", "dh", "directory", "discount", "discuss", "dl", "dload", "doc", "docs", "document", "documents", "doujin", "download", "downloads", "drama", "edu", "en", "ep", "episode", "episodes", "event", "events", "f", "faq", "favorite", "favourites", "favs", "feedback", "file", "files", "film", "films", "forum", "forums", "friend", "friends", "game", "games", "gif", "go", "go.html", "go.php", "group", "groups", "help", "home", "hot", "htm", "html", "image", "images", "img", "index", "info", "intro", "item", "items", "ja", "jp", "jump", "jump.html", "jump.php", "jumping", "knowledge", "lang", "lesson", "lessons", "lib", "library", "link", "links", "list", "live", "lives", "login", "logout", "m", "mag", "magnet", "mall", "manhua", "map", "member", "members", "message", "messages", "mobile", "movie", "movies", "music", "my", "new", "news", "note", "novel", "novels", "online", "order", "out", "out.html", "out.php", "outbound", "p", "page", "pages", "pay", "payment", "pdf", "photo", "photos", "pic", "pics", "picture", "pictures", "play", "player", "playlist", "post", "posts", "product", "products", "program", "programs", "project", "qa", "question", "rank", "ranking", "read", "readme", "redirect", "redirect.html", "redirect.php", "reg", "register", "res", "resource", "retrieve", "sale", "search", "season", "seasons", "section", "seller", "series", "service", "services", "setting", "settings", "share", "shop", "show", "shows", "site", "soft", "sort", "source", "special", "star", "stars", "static", "stock", "store", "stream", "streaming", "streams", "student", "study", "tag", "tags", "task", "teacher", "team", "tech", "temp", "test", "thread", "tool", "tools", "topic", "topics", "torrent", "trade", "travel", "tv", "txt", "type", "u", "upload", "uploads", "url", "urls", "user", "users", "v", "version", "video", "videos", "view", "vip", "vod", "watch", "web", "wenku", "wiki", "work", "www", "zh", "zh-cn", "zh-tw", "zip"];
-    const 随机数 = Math.floor(Math.random() * 3 + 1);
-    const 随机路径 = 常用路径目录.sort(() => 0.5 - Math.random()).slice(0, 随机数).join('/');
-    return `/${随机路径}`;
-}
-
-function 随机替换通配符(h) {
-    if (!h?.includes('*')) return h;
-    const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    return h.replace(/\*/g, () => {
-        let s = '';
-        for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++)
-            s += 字符集[Math.floor(Math.random() * 36)];
-        return s;
-    });
-}
-
-function 批量替换域名(内容, host, 每组数量 = 2) {
-    let count = 0, currentRandomHost = null;
-    return 内容.replace(/example\.com/g, () => {
-        if (count % 每组数量 === 0) currentRandomHost = 随机替换通配符(host);
-        count++;
-        return currentRandomHost;
-    });
-}
-
-async function 读取config_JSON(env, hostname, userID, path, 重置配置 = false) {
-    const host = 随机替换通配符(hostname);
-    const 初始化开始时间 = performance.now();
-    const 默认配置JSON = {
-        TIME: new Date().toISOString(),
-        HOST: host,
-        UUID: userID,
-        协议类型: "v" + "le" + "ss",
-        传输协议: "ws",
-        跳过证书验证: true,
-        启用0RTT: false,
-        TLS分片: null,
-        随机路径: false,
-        优选订阅生成: {
-            local: true, // true: 基于本地的优选地址  false: 优选订阅生成器
-            本地IP库: {
-                随机IP: true, // 当 随机IP 为true时生效，启用随机IP的数量，否则使用KV内的ADD.txt
-                随机数量: 16,
-                指定端口: -1,
-            },
-            SUB: null,
-            SUBNAME: "edge" + "tunnel",
-            SUBUpdateTime: 6, // 订阅更新时间（小时）
-            TOKEN: await MD5MD5(hostname + userID),
-        },
-        订阅转换配置: {
-            SUBAPI: "https://SUBAPI.cmliussss.net",
-            SUBCONFIG: "https://raw.githubusercontent.com/cmliu/ACL4SSR/refs/heads/main/Clash/config/ACL4SSR_Online_Mini_MultiMode_CF.ini",
-            SUBEMOJI: false,
-        },
-        反代: {
-            PROXYIP: "auto",
-            SOCKS5: {
-                启用: 启用SOCKS5反代,
-                全局: 启用SOCKS5全局反代,
-                账号: 我的SOCKS5账号,
-                白名单: SOCKS5白名单,
-            },
-        },
-        TG: {
-            启用: false,
-            BotToken: null,
-            ChatID: null,
-        },
-        CF: {
-            Email: null,
-            GlobalAPIKey: null,
-            AccountID: null,
-            APIToken: null,
-            Usage: {
-                success: false,
-                pages: 0,
-                workers: 0,
-                total: 0,
-            },
-        }
-    };
-
-    try {
-        let configJSON = await env.KV.get('config.json');
-        if (!configJSON || 重置配置 == true) {
-            await env.KV.put('config.json', JSON.stringify(默认配置JSON, null, 2));
-            config_JSON = 默认配置JSON;
-        } else {
-            config_JSON = JSON.parse(configJSON);
-        }
-    } catch (error) {
-        console.error(`读取config_JSON出错: ${error.message}`);
-        config_JSON = 默认配置JSON;
-    }
-
-    config_JSON.HOST = host;
-    config_JSON.UUID = userID;
-    config_JSON.PATH = path ? (path.startsWith('/') ? path : '/' + path) : (config_JSON.反代.SOCKS5.启用 ? ('/' + config_JSON.反代.SOCKS5.启用 + (config_JSON.反代.SOCKS5.全局 ? '://' : '=') + config_JSON.反代.SOCKS5.账号) : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`));
-    const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
-    config_JSON.LINK = `${config_JSON.协议类型}://${userID}@${host}:443?security=tls&type=${config_JSON.传输协议}&host=${host}&sni=${host}&path=${encodeURIComponent(config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
-    config_JSON.优选订阅生成.TOKEN = await MD5MD5(hostname + userID);
-
-    const 初始化TG_JSON = { BotToken: null, ChatID: null };
-    config_JSON.TG = { 启用: config_JSON.TG.启用 ? config_JSON.TG.启用 : false, ...初始化TG_JSON };
-    try {
-        const TG_TXT = await env.KV.get('tg.json');
-        if (!TG_TXT) {
-            await env.KV.put('tg.json', JSON.stringify(初始化TG_JSON, null, 2));
-        } else {
-            const TG_JSON = JSON.parse(TG_TXT);
-            config_JSON.TG.ChatID = TG_JSON.ChatID ? TG_JSON.ChatID : null;
-            config_JSON.TG.BotToken = TG_JSON.BotToken ? 掩码敏感信息(TG_JSON.BotToken) : null;
-        }
-    } catch (error) {
-        console.error(`读取tg.json出错: ${error.message}`);
-    }
-
-    const 初始化CF_JSON = { Email: null, GlobalAPIKey: null, AccountID: null, APIToken: null };
-    config_JSON.CF = { ...初始化CF_JSON, Usage: { success: false, pages: 0, workers: 0, total: 0 } };
-    try {
-        const CF_TXT = await env.KV.get('cf.json');
-        if (!CF_TXT) {
-            await env.KV.put('cf.json', JSON.stringify(初始化CF_JSON, null, 2));
-        } else {
-            const CF_JSON = JSON.parse(CF_TXT);
-            config_JSON.CF.Email = CF_JSON.Email ? CF_JSON.Email : null;
-            config_JSON.CF.GlobalAPIKey = CF_JSON.GlobalAPIKey ? 掩码敏感信息(CF_JSON.GlobalAPIKey) : null;
-            config_JSON.CF.AccountID = CF_JSON.AccountID ? 掩码敏感信息(CF_JSON.AccountID) : null;
-            config_JSON.CF.APIToken = CF_JSON.APIToken ? 掩码敏感信息(CF_JSON.APIToken) : null;
-            const Usage = await getCloudflareUsage(CF_JSON.Email, CF_JSON.GlobalAPIKey, CF_JSON.AccountID, CF_JSON.APIToken);
-            config_JSON.CF.Usage = Usage;
-        }
-    } catch (error) {
-        console.error(`读取cf.json出错: ${error.message}`);
-    }
-
-    config_JSON.加载时间 = (performance.now() - 初始化开始时间).toFixed(2) + 'ms';
-    return config_JSON;
-}
-
-async function 生成随机IP(request, count = 16, 指定端口 = -1) {
-    const asnMap = { '9808': 'cmcc', '4837': 'cu', '4134': 'ct' }, asn = request.cf.asn;
-    const cidr_url = asnMap[asn] ? `https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/${asnMap[asn]}.txt` : 'https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt';
-    const cfname = { '9808': 'CF移动优选', '4837': 'CF联通优选', '4134': 'CF电信优选' }[asn] || 'CF官方优选';
-    const cfport = [443, 2053, 2083, 2087, 2096, 8443];
-    let cidrList = [];
-    try { const res = await fetch(cidr_url); cidrList = res.ok ? await 整理成数组(await res.text()) : ['104.16.0.0/13']; } catch { cidrList = ['104.16.0.0/13']; }
-
-    const generateRandomIPFromCIDR = (cidr) => {
-        const [baseIP, prefixLength] = cidr.split('/'), prefix = parseInt(prefixLength), hostBits = 32 - prefix;
-        const ipInt = baseIP.split('.').reduce((a, p, i) => a | (parseInt(p) << (24 - i * 8)), 0);
-        const randomOffset = Math.floor(Math.random() * Math.pow(2, hostBits));
-        const mask = (0xFFFFFFFF << hostBits) >>> 0, randomIP = (((ipInt & mask) >>> 0) + randomOffset) >>> 0;
-        return [(randomIP >>> 24) & 0xFF, (randomIP >>> 16) & 0xFF, (randomIP >>> 8) & 0xFF, randomIP & 0xFF].join('.');
-    };
-
-    const randomIPs = Array.from({ length: count }, () => {
-        const ip = generateRandomIPFromCIDR(cidrList[Math.floor(Math.random() * cidrList.length)]);
-        return `${ip}:${指定端口 === -1 ? cfport[Math.floor(Math.random() * cfport.length)] : 指定端口}#${cfname}`;
-    });
-    return [randomIPs, randomIPs.join('\n')];
-}
-async function 整理成数组(内容) {
-    var 替换后的内容 = 内容.replace(/[	"'\r\n]+/g, ',').replace(/,+/g, ',');
-    if (替换后的内容.charAt(0) == ',') 替换后的内容 = 替换后的内容.slice(1);
-    if (替换后的内容.charAt(替换后的内容.length - 1) == ',') 替换后的内容 = 替换后的内容.slice(0, 替换后的内容.length - 1);
-    const 地址数组 = 替换后的内容.split(',');
-    return 地址数组;
-}
-
-async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) {
-    if (!urls?.length) return [];
-    const results = new Set();
-    await Promise.allSettled(urls.map(async (url) => {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 超时时间);
-            const response = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            let text = '';
-            try {
-                const buffer = await response.arrayBuffer();
-                const contentType = (response.headers.get('content-type') || '').toLowerCase();
-                const charset = contentType.match(/charset=([^\s;]+)/i)?.[1]?.toLowerCase() || '';
-
-                // 根据 Content-Type 响应头判断编码优先级
-                let decoders = ['utf-8', 'gb2312']; // 默认优先 UTF-8
-                if (charset.includes('gb') || charset.includes('gbk') || charset.includes('gb2312')) {
-                    decoders = ['gb2312', 'utf-8']; // 如果明确指定 GB 系编码，优先尝试 GB2312
-                }
-
-                // 尝试多种编码解码
-                let decodeSuccess = false;
-                for (const decoder of decoders) {
-                    try {
-                        const decoded = new TextDecoder(decoder).decode(buffer);
-                        // 验证解码结果的有效性
-                        if (decoded && decoded.length > 0 && !decoded.includes('\ufffd')) {
-                            text = decoded;
-                            decodeSuccess = true;
-                            break;
-                        } else if (decoded && decoded.length > 0) {
-                            // 如果有替换字符 (U+FFFD)，说明编码不匹配，继续尝试下一个编码
-                            continue;
-                        }
-                    } catch (e) {
-                        // 该编码解码失败，尝试下一个
-                        continue;
-                    }
-                }
-
-                // 如果所有编码都失败或无效，尝试 response.text()
-                if (!decodeSuccess) {
-                    text = await response.text();
-                }
-
-                // 如果返回的是空或无效数据，返回
-                if (!text || text.trim().length === 0) {
-                    return;
-                }
-            } catch (e) {
-                console.error('Failed to decode response:', e);
-                return;
-            }
-            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
-            const isCSV = lines.length > 1 && lines[0].includes(',');
-            const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
-            if (!isCSV) {
-                lines.forEach(line => {
-                    const hashIndex = line.indexOf('#');
-                    const [hostPart, remark] = hashIndex > -1 ? [line.substring(0, hashIndex), line.substring(hashIndex)] : [line, ''];
-                    let hasPort = false;
-                    if (hostPart.startsWith('[')) {
-                        hasPort = /\]:(\d+)$/.test(hostPart);
-                    } else {
-                        const colonIndex = hostPart.lastIndexOf(':');
-                        hasPort = colonIndex > -1 && /^\d+$/.test(hostPart.substring(colonIndex + 1));
-                    }
-                    const port = new URL(url).searchParams.get('port') || 默认端口;
-                    results.add(hasPort ? line : `${hostPart}:${port}${remark}`);
-                });
-            } else {
-                const headers = lines[0].split(',').map(h => h.trim());
-                const dataLines = lines.slice(1);
-                if (headers.includes('IP地址') && headers.includes('端口') && headers.includes('数据中心')) {
-                    const ipIdx = headers.indexOf('IP地址'), portIdx = headers.indexOf('端口');
-                    const remarkIdx = headers.indexOf('国家') > -1 ? headers.indexOf('国家') :
-                        headers.indexOf('城市') > -1 ? headers.indexOf('城市') : headers.indexOf('数据中心');
-                    const tlsIdx = headers.indexOf('TLS');
-                    dataLines.forEach(line => {
-                        const cols = line.split(',').map(c => c.trim());
-                        if (tlsIdx !== -1 && cols[tlsIdx]?.toLowerCase() !== 'true') return;
-                        const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-                        results.add(`${wrappedIP}:${cols[portIdx]}#${cols[remarkIdx]}`);
-                    });
-                } else if (headers.some(h => h.includes('IP')) && headers.some(h => h.includes('延迟')) && headers.some(h => h.includes('下载速度'))) {
-                    const ipIdx = headers.findIndex(h => h.includes('IP'));
-                    const delayIdx = headers.findIndex(h => h.includes('延迟'));
-                    const speedIdx = headers.findIndex(h => h.includes('下载速度'));
-                    const port = new URL(url).searchParams.get('port') || 默认端口;
-                    dataLines.forEach(line => {
-                        const cols = line.split(',').map(c => c.trim());
-                        const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-                        results.add(`${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
-                    });
-                }
-            }
-        } catch (e) { }
-    }));
-    return Array.from(results);
-}
-
-async function 反代参数获取(request) {
-    const url = new URL(request.url);
-    const { pathname, searchParams } = url;
-    const pathLower = pathname.toLowerCase();
-
-    // 初始化
-    我的SOCKS5账号 = searchParams.get('socks5') || searchParams.get('http') || null;
-    启用SOCKS5全局反代 = searchParams.has('globalproxy') || false;
-
-    // 统一处理反代IP参数 (优先级最高,使用正则一次匹配)
-    const proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)(.+)/);
-    if (searchParams.has('proxyip')) {
-        const 路参IP = searchParams.get('proxyip');
-        反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
-        return;
-    } else if (proxyMatch) {
-        const 路参IP = proxyMatch[1] === 'proxyip.' ? `proxyip.${proxyMatch[2]}` : proxyMatch[2];
-        反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
-        return;
-    }
-
-    // 处理SOCKS5/HTTP代理参数
-    let socksMatch;
-    if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?(.+)/i))) {
-        // 格式: /socks5://... 或 /http://...
-        启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
-        我的SOCKS5账号 = socksMatch[2].split('#')[0];
-        启用SOCKS5全局反代 = true;
-
-        // 处理Base64编码的用户名密码
-        if (我的SOCKS5账号.includes('@')) {
-            const atIndex = 我的SOCKS5账号.lastIndexOf('@');
-            let userPassword = 我的SOCKS5账号.substring(0, atIndex).replaceAll('%3D', '=');
-            if (/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i.test(userPassword) && !userPassword.includes(':')) {
-                userPassword = atob(userPassword);
-            }
-            我的SOCKS5账号 = `${userPassword}@${我的SOCKS5账号.substring(atIndex + 1)}`;
-        }
-    } else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=(.+)/i))) {
-        // 格式: /socks5=... 或 /s5=... 或 /gs5=... 或 /http=... 或 /ghttp=...
-        const type = socksMatch[1].toLowerCase();
-        我的SOCKS5账号 = socksMatch[2];
-        启用SOCKS5反代 = type.includes('http') ? 'http' : 'socks5';
-        启用SOCKS5全局反代 = type.startsWith('g') || 启用SOCKS5全局反代; // gs5 或 ghttp 开头启用全局
-    }
-
-    // 解析SOCKS5地址
-    if (我的SOCKS5账号) {
-        try {
-            parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号);
-            启用SOCKS5反代 = searchParams.get('http') ? 'http' : 启用SOCKS5反代;
-        } catch (err) {
-            console.error('解析SOCKS5地址失败:', err.message);
-            启用SOCKS5反代 = null;
-        }
-    } else 启用SOCKS5反代 = null;
-}
-
-async function 获取SOCKS5账号(address) {
-    if (address.includes('@')) {
-        const lastAtIndex = address.lastIndexOf('@');
-        let userPassword = address.substring(0, lastAtIndex).replaceAll('%3D', '=');
-        const base64Regex = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i;
-        if (base64Regex.test(userPassword) && !userPassword.includes(':')) userPassword = atob(userPassword);
-        address = `${userPassword}@${address.substring(lastAtIndex + 1)}`;
-    }
-    const atIndex = address.lastIndexOf("@");
-    const [hostPart, authPart] = atIndex === -1 ? [address, undefined] : [address.substring(atIndex + 1), address.substring(0, atIndex)];
-
-    // 解析认证
-    let username, password;
-    if (authPart) {
-        [username, password] = authPart.split(":");
-        if (!password) throw new Error('无效的 SOCKS 地址格式：认证部分必须是 "username:password" 的形式');
-    }
-
-    // 解析主机端口
-    let hostname, port;
-    if (hostPart.includes("]:")) { // IPv6带端口
-        [hostname, port] = [hostPart.split("]:")[0] + "]", Number(hostPart.split("]:")[1].replace(/[^\d]/g, ''))];
-    } else if (hostPart.startsWith("[")) { // IPv6无端口
-        [hostname, port] = [hostPart, 80];
-    } else { // IPv4/域名
-        const parts = hostPart.split(":");
-        [hostname, port] = parts.length === 2 ? [parts[0], Number(parts[1].replace(/[^\d]/g, ''))] : [hostPart, 80];
-    }
-
-    if (isNaN(port)) throw new Error('无效的 SOCKS 地址格式：端口号必须是数字');
-    if (hostname.includes(":") && !/^\[.*\]$/.test(hostname)) throw new Error('无效的 SOCKS 地址格式：IPv6 地址必须用方括号括起来，如 [2001:db8::1]');
-
-    return { username, password, hostname, port };
-}
-
-async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
-    const API = "https://api.cloudflare.com/client/v4";
-    const sum = (a) => a?.reduce((t, i) => t + (i?.sum?.requests || 0), 0) || 0;
-    const cfg = { "Content-Type": "application/json" };
-
-    try {
-        if (!AccountID && (!Email || !GlobalAPIKey)) return { success: false, pages: 0, workers: 0, total: 0 };
-
-        if (!AccountID) {
-            const r = await fetch(`${API}/accounts`, {
-                method: "GET",
-                headers: { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey }
-            });
-            if (!r.ok) throw new Error(`账户获取失败: ${r.status}`);
-            const d = await r.json();
-            if (!d?.result?.length) throw new Error("未找到账户");
-            const idx = d.result.findIndex(a => a.name?.toLowerCase().startsWith(Email.toLowerCase()));
-            AccountID = d.result[idx >= 0 ? idx : 0]?.id;
-        }
-
-        const now = new Date();
-        now.setUTCHours(0, 0, 0, 0);
+        let finalAccountID = AccountID;
+        if (!finalAccountID) { const r = await fetch(`${API}/accounts`, { method: "GET", headers: { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey } });
+            if (!r.ok) throw new Error(`账户获取失败: ${r.status}`); const d = await r.json();
+            const idx = d.result?.findIndex(a => a.name?.toLowerCase().startsWith(Email.toLowerCase())); finalAccountID = d.result?.[idx >= 0 ? idx : 0]?.id; }
+        if(!finalAccountID) throw new Error("无法获取 Account ID");
+        const now = new Date(); now.setUTCHours(0, 0, 0, 0);
         const hdr = APIToken ? { ...cfg, "Authorization": `Bearer ${APIToken}` } : { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey };
-
-        const res = await fetch(`${API}/graphql`, {
-            method: "POST",
-            headers: hdr,
-            body: JSON.stringify({
-                query: `query getBillingMetrics($AccountID: String!, $filter: AccountWorkersInvocationsAdaptiveFilter_InputObject) {
-                    viewer { accounts(filter: {accountTag: $AccountID}) {
-                        pagesFunctionsInvocationsAdaptiveGroups(limit: 1000, filter: $filter) { sum { requests } }
-                        workersInvocationsAdaptive(limit: 10000, filter: $filter) { sum { requests } }
-                    } }
-                }`,
-                variables: { AccountID, filter: { datetime_geq: now.toISOString(), datetime_leq: new Date().toISOString() } }
-            })
-        });
-
-        if (!res.ok) throw new Error(`查询失败: ${res.status}`);
-        const result = await res.json();
-        if (result.errors?.length) throw new Error(result.errors[0].message);
-
-        const acc = result?.data?.viewer?.accounts?.[0];
-        if (!acc) throw new Error("未找到账户数据");
-
-        const pages = sum(acc.pagesFunctionsInvocationsAdaptiveGroups);
-        const workers = sum(acc.workersInvocationsAdaptive);
-        const total = pages + workers;
-        console.log(`统计结果 - Pages: ${pages}, Workers: ${workers}, 总计: ${total}`);
-        return { success: true, pages, workers, total };
-
-    } catch (error) {
-        console.error('获取使用量错误:', error.message);
-        return { success: false, pages: 0, workers: 0, total: 0 };
-    }
+        const res = await fetch(`${API}/graphql`, { method: "POST", headers: hdr, body: JSON.stringify({ query: `query getBillingMetrics($AccountID: String!, $filter: AccountWorkersInvocationsAdaptiveFilter_InputObject) { viewer { accounts(filter: {accountTag: $AccountID}) { pagesFunctionsInvocationsAdaptiveGroups(limit: 1000, filter: $filter) { sum { requests } } workersInvocationsAdaptive(limit: 10000, filter: $filter) { sum { requests } } } } }`, variables: { AccountID: finalAccountID, filter: { datetime_geq: now.toISOString(), datetime_leq: new Date().toISOString() } } }) });
+        if (!res.ok) throw new Error(`查询失败: ${res.status}`); const result = await res.json();
+        const acc = result?.data?.viewer?.accounts?.[0]; const pages = acc?.pagesFunctionsInvocationsAdaptiveGroups?.reduce((t, i) => t + (i?.sum?.requests || 0), 0) || 0;
+        const workers = acc?.workersInvocationsAdaptive?.reduce((t, i) => t + (i?.sum?.requests || 0), 0) || 0;
+        return { success: true, total: pages + workers, pages, workers };
+    } catch (e) { return { success: false, msg: e.message }; }
+}
+async function sendTgMsg(ctx, env, title, r, detail = "", isAdmin = false) {
+  const token = await getSafeEnv(env, 'TG_BOT_TOKEN', TG_BOT_TOKEN); const chat_id = await getSafeEnv(env, 'TG_CHAT_ID', TG_CHAT_ID);
+  if (!token || !chat_id) return;
+  let icon = "📡"; if (title.includes("登录")) icon = "🔐"; else if (title.includes("订阅")) icon = "🔄"; else if (title.includes("检测")) icon = "🔍"; else if (title.includes("点击")) icon = "🌟";
+  const roleTag = isAdmin ? "🛡️ <b>管理员操作</b>" : "👤 <b>用户访问</b>";
+  try {
+    const url = new URL(r.url); const ip = r.headers.get('cf-connecting-ip') || 'Unknown'; const ua = r.headers.get('User-Agent') || 'Unknown'; const city = r.cf?.city || 'Unknown'; const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const safe = (str) => (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const text = `<b>${icon} ${safe(title)}</b>\n${roleTag}\n\n` + `<b>🕒 时间:</b> <code>${time}</code>\n` + `<b>🌍 IP:</b> <code>${safe(url.hostname)}</code>\n` + `<b>🔗 域名:</b> <code>${safe(url.hostname)}</code>\n` + `<b>🛣️ 路径:</b> <code>${safe(url.pathname)}</code>\n` + `<b>📱 客户端:</b> <code>${safe(ua)}</code>\n` + (detail ? `<b>ℹ️ 详情:</b> ${safe(detail)}` : "");
+    const params = { chat_id: chat_id, text: text, parse_mode: 'HTML', disable_web_page_preview: true };
+    const p = fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) }).catch(() => {});
+    if(ctx && ctx.waitUntil) ctx.waitUntil(p);
+  } catch(e) {}
 }
 
-function sha224(s) {
-    const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
-    const r = (n, b) => ((n >>> b) | (n << (32 - b))) >>> 0;
-    s = unescape(encodeURIComponent(s));
-    const l = s.length * 8; s += String.fromCharCode(0x80);
-    while ((s.length * 8) % 512 !== 448) s += String.fromCharCode(0);
-    const h = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4];
-    const hi = Math.floor(l / 0x100000000), lo = l & 0xFFFFFFFF;
-    s += String.fromCharCode((hi >>> 24) & 0xFF, (hi >>> 16) & 0xFF, (hi >>> 8) & 0xFF, hi & 0xFF, (lo >>> 24) & 0xFF, (lo >>> 16) & 0xFF, (lo >>> 8) & 0xFF, lo & 0xFF);
-    const w = []; for (let i = 0; i < s.length; i += 4)w.push((s.charCodeAt(i) << 24) | (s.charCodeAt(i + 1) << 16) | (s.charCodeAt(i + 2) << 8) | s.charCodeAt(i + 3));
-    for (let i = 0; i < w.length; i += 16) {
-        const x = new Array(64).fill(0);
-        for (let j = 0; j < 16; j++)x[j] = w[i + j];
-        for (let j = 16; j < 64; j++) {
-            const s0 = r(x[j - 15], 7) ^ r(x[j - 15], 18) ^ (x[j - 15] >>> 3);
-            const s1 = r(x[j - 2], 17) ^ r(x[j - 2], 19) ^ (x[j - 2] >>> 10);
-            x[j] = (x[j - 16] + s0 + x[j - 7] + s1) >>> 0;
-        }
-        let [a, b, c, d, e, f, g, h0] = h;
-        for (let j = 0; j < 64; j++) {
-            const S1 = r(e, 6) ^ r(e, 11) ^ r(e, 25), ch = (e & f) ^ (~e & g), t1 = (h0 + S1 + ch + K[j] + x[j]) >>> 0;
-            const S0 = r(a, 2) ^ r(a, 13) ^ r(a, 22), maj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + maj) >>> 0;
-            h0 = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
-        }
-        for (let j = 0; j < 8; j++)h[j] = (h[j] + (j === 0 ? a : j === 1 ? b : j === 2 ? c : j === 3 ? d : j === 4 ? e : j === 5 ? f : j === 6 ? g : h0)) >>> 0;
-    }
-    let hex = '';
-    for (let i = 0; i < 7; i++) {
-        for (let j = 24; j >= 0; j -= 8)hex += ((h[i] >>> j) & 0xFF).toString(16).padStart(2, '0');
-    }
-    return hex;
-}
-
-async function 解析地址端口(proxyIP) {
-    proxyIP = proxyIP.toLowerCase();
-    if (proxyIP.includes('.william')) {
-        const williamResult = await (async function 解析William域名(william) {
-            try {
-                const response = await fetch(`https://1.1.1.1/dns-query?name=${william}&type=TXT`, { headers: { 'Accept': 'application/dns-json' } });
-                if (!response.ok) return null;
-                const data = await response.json();
-                const txtRecords = (data.Answer || []).filter(record => record.type === 16).map(record => record.data);
-                if (txtRecords.length === 0) return null;
-                let txtData = txtRecords[0];
-                if (txtData.startsWith('"') && txtData.endsWith('"')) txtData = txtData.slice(1, -1);
-                const prefixes = txtData.replace(/\\010/g, ',').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(Boolean);
-                if (prefixes.length === 0) return null;
-                return prefixes[Math.floor(Math.random() * prefixes.length)];
-            } catch (error) {
-                console.error('解析ProxyIP失败:', error);
-                return null;
-            }
-        })(proxyIP);
-        proxyIP = williamResult || proxyIP;
-    }
-    let 地址 = proxyIP, 端口 = 443;
-    if (proxyIP.includes('.tp')) {
-        const tpMatch = proxyIP.match(/\.tp(\d+)/);
-        if (tpMatch) 端口 = parseInt(tpMatch[1], 10);
-        return [地址, 端口];
-    }
-    if (proxyIP.includes(']:')) {
-        const parts = proxyIP.split(']:');
-        地址 = parts[0] + ']';
-        端口 = parseInt(parts[1], 10) || 端口;
-    } else if (proxyIP.includes(':') && !proxyIP.startsWith('[')) {
-        const colonIndex = proxyIP.lastIndexOf(':');
-        地址 = proxyIP.slice(0, colonIndex);
-        端口 = parseInt(proxyIP.slice(colonIndex + 1), 10) || 端口;
-    }
-    return [地址, 端口];
-}
-
-async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
-    const startTime = Date.now();
-    try { parsedSocks5Address = await 获取SOCKS5账号(代理参数); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
-    const { username, password, hostname, port } = parsedSocks5Address;
-    const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
+// =============================================================================
+// 🟢 主入口 (防1101保护)
+// =============================================================================
+export default {
+  async fetch(r, env, ctx) { 
     try {
-        const initialData = new Uint8Array(0);
-        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData) : await httpConnect('check.socks5.090227.xyz', 80, initialData);
-        if (!tcpSocket) return { success: false, error: '无法连接到代理服务器', proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
-        try {
-            const writer = tcpSocket.writable.getWriter(), encoder = new TextEncoder();
-            await writer.write(encoder.encode(`GET /cdn-cgi/trace HTTP/1.1\r\nHost: check.socks5.090227.xyz\r\nConnection: close\r\n\r\n`));
-            writer.releaseLock();
-            const reader = tcpSocket.readable.getReader(), decoder = new TextDecoder();
-            let response = '';
-            try { while (true) { const { done, value } = await reader.read(); if (done) break; response += decoder.decode(value, { stream: true }); } } finally { reader.releaseLock(); }
-            await tcpSocket.close();
-            return { success: true, proxy: 代理协议 + "://" + 完整代理参数, ip: response.match(/ip=(.*)/)[1], loc: response.match(/loc=(.*)/)[1], responseTime: Date.now() - startTime };
-        } catch (error) {
-            try { await tcpSocket.close(); } catch (e) { console.log('关闭连接时出错:', e); }
-            return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
+      const url = new URL(r.url);
+      const host = url.hostname; 
+      const UA = (r.headers.get('User-Agent') || "").toLowerCase();
+      const UA_L = UA.toLowerCase();
+      const clientIP = r.headers.get('cf-connecting-ip');
+      const country = r.cf?.country || 'UNK';
+      const city = r.cf?.city || 'Unknown';
+
+      const _UUID = env.KEY ? await getDynamicUUID(env.KEY, env.UUID_REFRESH || 86400) : (await getSafeEnv(env, 'UUID', UUID));
+      const _WEB_PW = await getSafeEnv(env, 'WEB_PASSWORD', WEB_PASSWORD);
+      const _SUB_PW = await getSafeEnv(env, 'SUB_PASSWORD', SUB_PASSWORD);
+      
+      // ⭐ 功能1: 多ProxyIP轮询支持
+      let _PROXY_IP = await getSafeEnv(env, 'PROXYIP', DEFAULT_PROXY_IP);
+      const proxyIPs = _PROXY_IP.split(',').map(i => i.trim()).filter(i => i);
+      _PROXY_IP = proxyIPs[Math.floor(Date.now() / 1000) % proxyIPs.length] || _PROXY_IP;
+
+      const _PS = await getSafeEnv(env, 'PS', "");
+      const _LOGIN_TITLE = await getSafeEnv(env, 'LOGIN_PAGE_TITLE', LOGIN_PAGE_TITLE);
+      const _DASH_TITLE = await getSafeEnv(env, 'DASHBOARD_TITLE', DASHBOARD_TITLE); 
+      
+      // ⭐ 功能2 & 3: 准备多订阅域名和转换器的列表
+      let _SUB_DOMAIN_STR = await getSafeEnv(env, 'SUB_DOMAIN', DEFAULT_SUB_DOMAIN);
+      let _CONVERTER_STR = await getSafeEnv(env, 'SUBAPI', DEFAULT_CONVERTER);
+      const _SUB_DOMAIN_LIST = _SUB_DOMAIN_STR.split(',').map(s => { let v=s.trim(); if(v.includes("://")) v=v.split("://")[1]; if(v.includes("/")) v=v.split("/")[0]; return v; }).filter(s=>s);
+      const _CONVERTER_LIST = _CONVERTER_STR.split(',').map(s => { let v=s.trim(); if(v.endsWith("/")) v=v.slice(0, -1); if(!v.includes("://")) v="https://"+v; return v; }).filter(s=>s);
+      
+      // 取第一个作为默认值，用于界面显示
+      let _SUB_DOMAIN = _SUB_DOMAIN_LIST[0] || host;
+      let _CONVERTER = _CONVERTER_LIST[0] || DEFAULT_CONVERTER;
+
+      // ⭐ 功能4: DLS速度下限筛选
+      const _DLS = await getSafeEnv(env, 'DLS', DLS);
+
+      // 👇 变量去重与统一调用逻辑：优先 getSafeEnv(环境变量, 默认常量)
+      const _TG_GROUP_URL = await getSafeEnv(env, 'TG_GROUP_URL', TG_GROUP_URL);
+      const _PROXY_CHECK_URL = await getSafeEnv(env, 'PROXY_CHECK_URL', PROXY_CHECK_URL);
+      const _SITE_URL = await getSafeEnv(env, 'SITE_URL', SITE_URL);
+      const _GITHUB_URL = await getSafeEnv(env, 'GITHUB_URL', GITHUB_URL);
+      const _CLASH_CONFIG = await getSafeEnv(env, 'CLASH_CONFIG', CLASH_CONFIG);
+      const _SINGBOX_CONFIG_V12 = await getSafeEnv(env, 'SINGBOX_CONFIG_V12', SINGBOX_CONFIG_V12);
+      
+      if (UA_L.includes('spider') || UA_L.includes('bot') || UA_L.includes('python') || UA_L.includes('scrapy') || UA_L.includes('curl') || UA_L.includes('wget')) {
+          return new Response('Not Found', { status: 404 });
+      }
+
+      let isGlobalAdmin = await checkWhitelist(env, clientIP);
+      let isValidUser = false; 
+      let hasAuthCookie = false; 
+
+      const paramUUID = url.searchParams.get('uuid');
+      if (paramUUID && paramUUID.toLowerCase() === _UUID.toLowerCase()) isValidUser = true;
+      if (_SUB_PW && url.pathname === `/${_SUB_PW}`) isValidUser = true;
+
+      if (_WEB_PW) {
+        const cookie = r.headers.get('Cookie') || "";
+        const regex = new RegExp(`auth=${_WEB_PW.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(;|$)`);
+        if (regex.test(cookie)) {
+            isValidUser = true; hasAuthCookie = true;
+            if (!isGlobalAdmin) { ctx.waitUntil(addWhitelist(env, clientIP)); isGlobalAdmin = true; }
         }
-    } catch (error) { return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime }; }
-}
-//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
-async function nginx() {
-    return `
-	<!DOCTYPE html>
-	<html>
-	<head>
-	<title>Welcome to nginx!</title>
-	<style>
-		body {
-			width: 35em;
-			margin: 0 auto;
-			font-family: Tahoma, Verdana, Arial, sans-serif;
-		}
-	</style>
-	</head>
-	<body>
-	<h1>Welcome to nginx!</h1>
-	<p>If you see this page, the nginx web server is successfully installed and
-	working. Further configuration is required.</p>
-	
-	<p>For online documentation and support please refer to
-	<a href="http://nginx.org/">nginx.org</a>.<br/>
-	Commercial support is available at
-	<a href="http://nginx.com/">nginx.com</a>.</p>
-	
-	<p><em>Thank you for using nginx.</em></p>
-	</body>
-	</html>
-	`
-}
+      }
+      if (isGlobalAdmin) isValidUser = true;
 
-async function html1101(host, 访问IP) {
-    const now = new Date();
-    const 格式化时间戳 = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
-    const 随机字符串 = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
+      if (env.DB || env.LH) ctx.waitUntil(incrementDailyStats(env));
+      if (url.pathname === '/favicon.ico') return new Response(null, { status: 404 });
+      
+      const flag = url.searchParams.get('flag');
+      if (flag) {
+          if (flag === 'github') { await sendTgMsg(ctx, env, "🌟 用户点击了烈火项目", r, "来源: 登录页面直达链接", isGlobalAdmin); return new Response(null, { status: 204 }); }
+          if (flag === 'log_proxy_check') { await sendTgMsg(ctx, env, "🔍 用户点击了 ProxyIP 检测", r, "来源: 后台管理面板", isGlobalAdmin); return new Response(null, { status: 204 }); }
+          if (flag === 'log_sub_test') { await sendTgMsg(ctx, env, "🌟 用户点击了订阅测试", r, "来源: 后台管理面板", isGlobalAdmin); return new Response(null, { status: 204 }); }
+          if (flag === 'stats') { let reqCount = await incrementDailyStats(env); const cfStats = await getCloudflareUsage(env); const finalReq = cfStats.success ? `${cfStats.total} (API)` : `${reqCount} (Internal)`; const hasKV = !!(env.DB || env.LH); const cfConfigured = cfStats.success || (!!await getSafeEnv(env, 'CF_EMAIL', "") && !!await getSafeEnv(env, 'CF_KEY', "")); return new Response(JSON.stringify({ req: finalReq, ip: clientIP, loc: `${city}, ${country}`, hasKV: hasKV, cfConfigured: cfConfigured }), { headers: { 'Content-Type': 'application/json' } }); }
+          if (flag === 'get_logs') { if (!hasAuthCookie && !isGlobalAdmin) return new Response('403 Forbidden', { status: 403 }); if (env.DB) { try { const { results } = await env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT 50").all(); return new Response(JSON.stringify({ type: 'd1', logs: results }), { headers: { 'Content-Type': 'application/json' } }); } catch(e) {} } else if (env.LH) { try { const logs = await env.LH.get('ACCESS_LOGS') || ""; return new Response(JSON.stringify({ type: 'kv', logs: logs }), { headers: { 'Content-Type': 'application/json' } }); } catch(e) {} } return new Response(JSON.stringify({ logs: "No Storage" }), { headers: { 'Content-Type': 'application/json' } }); }
+          if (flag === 'get_whitelist') { if (!hasAuthCookie && !isGlobalAdmin) return new Response('403 Forbidden', { status: 403 }); const list = await getAllWhitelist(env); return new Response(JSON.stringify({ list }), { headers: { 'Content-Type': 'application/json' } }); }
+          if (flag === 'add_whitelist' && r.method === 'POST') { if (!hasAuthCookie && !isGlobalAdmin) return new Response('403 Forbidden', { status: 403 }); const body = await r.json(); if(body.ip) await addWhitelist(env, body.ip); return new Response(JSON.stringify({status:'ok'}), {headers:{'Content-Type':'application/json'}}); }
+          if (flag === 'del_whitelist' && r.method === 'POST') { if (!hasAuthCookie && !isGlobalAdmin) return new Response('403 Forbidden', { status: 403 }); const body = await r.json(); if(body.ip) await delWhitelist(env, body.ip); return new Response(JSON.stringify({status:'ok'}), {headers:{'Content-Type':'application/json'}}); }
+          if (flag === 'validate_tg' && r.method === 'POST') { const body = await r.json(); await sendTgMsg(ctx, { TG_BOT_TOKEN: body.TG_BOT_TOKEN, TG_CHAT_ID: body.TG_CHAT_ID }, "🤖 TG 推送可用性验证", r, "配置有效", true); return new Response(JSON.stringify({success:true, msg:"验证消息已发送"}), {headers:{'Content-Type':'application/json'}}); }
+          if (flag === 'validate_cf' && r.method === 'POST') { const body = await r.json(); const res = await getCloudflareUsage(body); return new Response(JSON.stringify({success:res.success, msg: res.success ? `验证通过: 总请求 ${res.total}` : `验证失败: ${res.msg}`}), {headers:{'Content-Type':'application/json'}}); }
+          if (flag === 'save_config' && r.method === 'POST') { if (!hasAuthCookie && !isGlobalAdmin) return new Response('403 Forbidden', { status: 403 }); try { const body = await r.json(); for (const [k, v] of Object.entries(body)) { if (env.DB) await env.DB.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(k, v, v).run(); if (env.LH) await env.LH.put(k, v); } return new Response(JSON.stringify({status: 'ok'}), { headers: { 'Content-Type': 'application/json' } }); } catch(e) { return new Response(JSON.stringify({status: 'error', msg: e.toString()}), { headers: { 'Content-Type': 'application/json' } }); } }
+      }
 
-    return `<!DOCTYPE html>
-<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 7]>    <html class="no-js ie7 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 8]>    <html class="no-js ie8 oldie" lang="en-US"> <![endif]-->
-<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->
-<head>
-<title>Worker threw exception | ${host} | Cloudflare</title>
-<meta charset="UTF-8" />
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta http-equiv="X-UA-Compatible" content="IE=Edge" />
-<meta name="robots" content="noindex, nofollow" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<link rel="stylesheet" id="cf_styles-css" href="/cdn-cgi/styles/cf.errors.css" />
-<!--[if lt IE 9]><link rel="stylesheet" id='cf_styles-ie-css' href="/cdn-cgi/styles/cf.errors.ie.css" /><![endif]-->
-<style>body{margin:0;padding:0}</style>
+      if (_SUB_PW && url.pathname === `/${_SUB_PW}`) {
+          ctx.waitUntil(logAccess(env, clientIP, `${city},${country}`, "订阅更新"));
+          const isFlagged = url.searchParams.has('flag');
+          if (!isFlagged) {
+              try {
+                  const _d = (s) => atob(s);
+                  const rules = [['TWlob21v', 'bWlob21v'], ['RmxDbGFzaA==', 'ZmxjbGFzaA=='], ['Q2xhc2g=', 'Y2xhc2g='], ['Q2xhc2g=', 'bWV0YQ=='], ['Q2xhc2g=', 'c3Rhc2g='], ['SGlkZGlmeQ==', 'aGlkZGlmeQ=='], ['U2luZy1ib3g=', 'c2luZy1ib3g='], ['U2luZy1ib3g=', 'c2luZ2JveA=='], ['U2luZy1ib3g=', 'c2Zp'], ['U2luZy1ib3g=', 'Ym94'], ['djJyYXlOL0NvcmU=', 'djJyYXk='], ['U3VyZ2U=', 'c3VyZ2U='], ['UXVhbnR1bXVsdCBY', 'cXVhbnR1bXVsdA=='], ['U2hhZG93cm9ja2V0', 'c2hhZG93cm9ja2V0'], ['TG9vbg==', 'bG9vbg=='], ['SGFB', 'aGFwcA==']];
+                  let cName = "VW5rbm93bg=="; let isProxy = false;
+                  for (const [n, k] of rules) { if (UA_L.includes(_d(k))) { cName = n; isProxy = true; break; } }
+                  if (!isProxy && (UA_L.includes(_d('bW96aWxsYQ==')) || UA_L.includes(_d('Y2hyb21l')))) cName = "QnJvd3Nlcg==";
+                  const title = isProxy ? "🔄 快速订阅更新" : "🌐 访问快速订阅页";
+                  const p = sendTgMsg(ctx, env, title, r, `类型: ${_d(cName)}`, isGlobalAdmin);
+                  if(ctx && ctx.waitUntil) ctx.waitUntil(p);
+              } catch (e) {}
+          }
+          const requestProxyIp = url.searchParams.get('proxyip') || _PROXY_IP;
+          const pathParam = requestProxyIp ? "/proxyip=" + requestProxyIp : "/";
+          
+          if (UA_L.includes('sing-box') || UA_L.includes('singbox') || UA_L.includes('clash') || UA_L.includes('meta') || UA_L.includes('loon') || UA_L.includes('surge')) {
+              const type = (UA_L.includes('clash') || UA_L.includes('meta')) ? 'clash' : 'singbox';
+              const config = type === 'clash' ? _CLASH_CONFIG : _SINGBOX_CONFIG_V12;
+              
+              // ⭐ 功能3: 多订阅转换器故障切换
+              let lastRes = null;
+              for (const converterUrl of _CONVERTER_LIST) {
+                  // ⭐ 功能2: 多订阅源域名故障切换 (构建 subUrl 时循环尝试)
+                  // 注意：转换器一般只接受一个 url 参数，这里我们需要确定用哪个 subUrl 传给转换器
+                  // 策略：我们生成第一个可用的 subUrl (非当前 host) 传给转换器，或者直接传 host (如果是worker自身)
+                  // 简单起见，我们构造一个基于 _SUB_DOMAIN_LIST[0] 的 URL 传给转换器，因为转换器是服务器端抓取
+                  let targetSubDomain = _SUB_DOMAIN_LIST[0] || host;
+                  const subUrl = `https://${targetSubDomain}/sub?uuid=${_UUID}&encryption=none&security=tls&sni=${host}&alpn=h3&fp=random&allowInsecure=1&type=ws&host=${host}&path=${encodeURIComponent(pathParam)}`;
+                  
+                  const subApi = `${converterUrl}/sub?target=${type}&url=${encodeURIComponent(subUrl)}&config=${encodeURIComponent(config)}&emoji=true&list=false&sort=false&fdn=false&scv=false`;
+                  try {
+                      const res = await fetch(subApi, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } });
+                      if (res.ok) { lastRes = res; break; } // 成功则跳出循环
+                  } catch(e) {}
+              }
+              if (lastRes) return new Response(lastRes.body, { status: 200, headers: lastRes.headers });
+          }
+          
+          // 原生订阅处理 (支持多域名故障切换)
+          try {
+            let success = false;
+            let body = "";
+            let finalHeaders = {};
+            
+            // ⭐ 功能2: 多订阅源域名故障切换
+            for (const subDomain of _SUB_DOMAIN_LIST) {
+                if (host.toLowerCase() === subDomain.toLowerCase()) continue; // 跳过自身，防止死循环 (如果是自请求)
+                const subUrl = `https://${subDomain}/sub?uuid=${_UUID}&encryption=none&security=tls&sni=${host}&alpn=h3&fp=random&allowInsecure=1&type=ws&host=${host}&path=${encodeURIComponent(pathParam)}`;
+                try {
+                    const res = await fetch(subUrl, { headers: { 'User-Agent': UA } });
+                    if (res.ok) {
+                        body = await res.text();
+                        finalHeaders = res.headers;
+                        success = true;
+                        break; 
+                    }
+                } catch(e) {}
+            }
 
+            if (success) {
+                if (_PS) { try { const decoded = atob(body); const modified = decoded.split('\n').map(line => { line = line.trim(); if (!line || !line.includes('://')) return line; if (line.includes('#')) return line + encodeURIComponent(` ${_PS}`); return line + '#' + encodeURIComponent(_PS); }).join('\n'); body = btoa(modified); } catch(e) {} }
+                return new Response(body, { status: 200, headers: finalHeaders });
+            }
+          } catch(e) {}
+          
+          const allIPs = await getCustomIPs(env, _DLS); // 传入 DLS
+          const listText = genNodes(host, _UUID, requestProxyIp, allIPs, _PS);
+          return new Response(btoa(unescape(encodeURIComponent(listText))), { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
 
-<!--[if gte IE 10]><!-->
-<script>
-  if (!navigator.cookieEnabled) {
-    window.addEventListener('DOMContentLoaded', function () {
-      var cookieEl = document.getElementById('cookie-alert');
-      cookieEl.style.display = 'block';
-    })
+      if (url.pathname === '/sub') {
+          ctx.waitUntil(logAccess(env, clientIP, `${city},${country}`, "常规订阅"));
+          const requestUUID = url.searchParams.get('uuid');
+          if (requestUUID.toLowerCase() !== _UUID.toLowerCase()) return new Response('Invalid UUID', { status: 403 });
+          let proxyIp = url.searchParams.get('proxyip') || _PROXY_IP;
+          const pathParam = url.searchParams.get('path');
+          if (pathParam && pathParam.includes('/proxyip=')) proxyIp = pathParam.split('/proxyip=')[1];
+          const allIPs = await getCustomIPs(env, _DLS); // 传入 DLS
+          const listText = genNodes(host, _UUID, proxyIp, allIPs, _PS);
+          return new Response(btoa(unescape(encodeURIComponent(listText))), { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+
+      if (r.headers.get('Upgrade') !== 'websocket') {
+        const noCacheHeaders = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' };
+        if (!hasAuthCookie) return new Response(loginPage(_TG_GROUP_URL, _SITE_URL, _GITHUB_URL, _LOGIN_TITLE), { status: 200, headers: noCacheHeaders });
+        await sendTgMsg(ctx, env, "✅ 后台登录成功", r, "进入管理面板", true);
+        ctx.waitUntil(logAccess(env, clientIP, `${city},${country}`, "登录后台"));
+
+        const sysParams = { tgToken: env.TG_BOT_TOKEN || TG_BOT_TOKEN, tgId: env.TG_CHAT_ID || TG_CHAT_ID, cfId: env.CF_ID || "", cfToken: env.CF_TOKEN || "", cfMail: env.CF_EMAIL || "", cfKey: env.CF_KEY || "" };
+        const tgToken = await getSafeEnv(env, 'TG_BOT_TOKEN', TG_BOT_TOKEN);
+        const tgId = await getSafeEnv(env, 'TG_CHAT_ID', TG_CHAT_ID);
+        const cfId = await getSafeEnv(env, 'CF_ID', ''); const cfToken = await getSafeEnv(env, 'CF_TOKEN', '');
+        const cfMail = await getSafeEnv(env, 'CF_EMAIL', ''); const cfKey = await getSafeEnv(env, 'CF_KEY', '');
+        const tgState = !!(tgToken && tgId); const cfState = (!!(cfId && cfToken)) || (!!(cfMail && cfKey));
+        const _ADD = await getSafeEnv(env, 'ADD', ""); const _ADDAPI = await getSafeEnv(env, 'ADDAPI', ""); const _ADDCSV = await getSafeEnv(env, 'ADDCSV', "");
+
+        // 传入 _DLS 参数到 dashPage
+        return new Response(dashPage(url.hostname, _UUID, _PROXY_IP, _SUB_PW, _SUB_DOMAIN, _CONVERTER, env, clientIP, hasAuthCookie, tgState, cfState, _ADD, _ADDAPI, _ADDCSV, tgToken, tgId, cfId, cfToken, cfMail, cfKey, sysParams, _DASH_TITLE, _PROXY_CHECK_URL, _DLS), { status: 200, headers: noCacheHeaders });
+      }
+      
+      // 🟢 代理入口 - 混淆版
+      const { proxyIP, sq, enSq, gp } = parsePC(url.pathname);
+      const { 0: c, 1: s } = new WebSocketPair();
+      s.accept(); 
+      handle(s, proxyIP, sq, enSq, gp, _UUID); 
+      return new Response(null, { status: 101, webSocket: c });
+
+  } catch (err) {
+      return new Response(err.toString(), { status: 500 });
+    }
   }
-</script>
-<!--<![endif]-->
+};
 
+// =============================================================================
+// 📋 UI & 节点生成
+// =============================================================================
+
+function genNodes(host, uuid, proxyIP, customIPs, psName) {
+  const commonUrlPart = `?encryption=none&security=tls&sni=${host}&fp=random&type=ws&host=${host}`;
+  const separator = psName ? ` ${psName}` : '';
+  const result = [];
+  if (!customIPs || customIPs.length === 0) {
+      const path = proxyIP ? `/proxyip=${proxyIP}` : "/";
+      const nodeName = `${psName || 'Worker'} - Default`;
+      const vLink = `${P_V}://${uuid}@${proxyIP || host}:443${commonUrlPart}&path=${encodeURIComponent(path)}#${encodeURIComponent(nodeName)}`;
+      return vLink;
+  }
+  for (const ipInfo of customIPs) {
+      let [addressPart, ...nameParts] = ipInfo.split('#');
+      let uniqueName = nameParts.join('#').trim();
+      addressPart = addressPart.trim();
+      let ip = addressPart; let port = '443';
+      if (addressPart.includes(':') && !addressPart.includes(']:')) { const parts = addressPart.split(':'); ip = parts[0]; port = parts[1]; }
+      const path = proxyIP ? `/proxyip=${proxyIP}` : "/";
+      let nodeName = uniqueName || ip; if (psName) nodeName = `${nodeName}${separator}`;
+      const vLink = `${P_V}://${uuid}@${ip}:${port}${commonUrlPart}&path=${encodeURIComponent(path)}#${encodeURIComponent(nodeName)}`;
+      result.push(vLink);
+  }
+  return result.join('\n');
+}
+
+// ⭐ 功能4: 修改 getCustomIPs 支持 DLS 筛选
+async function getCustomIPs(env, dlsThreshold) {
+    let allIPs = [];
+    const threshold = Number(dlsThreshold) || 5000; // 默认5000
+    const addText = await getSafeEnv(env, 'ADD', "");
+    if (addText) { addText.split('\n').forEach(line => { const trimmed = line.trim(); if (trimmed && !trimmed.startsWith('#')) allIPs.push(trimmed); }); }
+    const addApi = await getSafeEnv(env, 'ADDAPI', "");
+    if (addApi) { const urls = addApi.split('\n').filter(u => u.trim().startsWith('http')); for (const url of urls) { try { const res = await fetch(url.trim(), { headers: { 'User-Agent': 'Mozilla/5.0' } }); if (res.ok) { const text = await res.text(); text.split('\n').forEach(line => { const trimmed = line.trim(); if (trimmed && !trimmed.startsWith('#')) allIPs.push(trimmed); }); } } catch (e) {} } }
+    const addCsv = await getSafeEnv(env, 'ADDCSV', "");
+    if (addCsv) { 
+        const urls = addCsv.split('\n').filter(u => u.trim().startsWith('http')); 
+        for (const url of urls) { 
+            try { 
+                const res = await fetch(url.trim(), { headers: { 'User-Agent': 'Mozilla/5.0' } }); 
+                if (res.ok) { 
+                    const text = await res.text(); 
+                    text.split('\n').forEach(line => { 
+                        const trimmed = line.trim(); 
+                        if (!trimmed || trimmed.startsWith('#')) return;
+                        // CSV格式: IP,端口,TLS,数据中心,地区,城市,网络延迟,下载速度
+                        // 索引: 0, 1, 2, 3, 4, 5, 6, 7
+                        const cols = trimmed.split(',');
+                        if (cols.length >= 8) {
+                            const speed = Number(cols[7]);
+                            if (!isNaN(speed) && speed < threshold) return; // 速度低于阈值则跳过
+                        }
+                        const firstCol = cols[0]; 
+                        // 将CSV行也尝试作为IP加入 (通常CSV第一列就是IP)
+                        if (firstCol) allIPs.push(firstCol); 
+                    }); 
+                } 
+            } catch (e) {} 
+        } 
+    }
+    return allIPs;
+}
+
+function loginPage(tgGroup, siteUrl, githubUrl, pageTitle) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=0.5, user-scalable=yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>${pageTitle}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%); color: white; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; position: relative; }
+
+        /* 星空背景 */
+        .stars { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; overflow: hidden; }
+        .star { position: absolute; width: 2px; height: 2px; background: white; border-radius: 50%; animation: twinkle 3s infinite; box-shadow: 0 0 4px rgba(255, 255, 255, 0.8); }
+        @keyframes twinkle { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.5); } }
+
+        /* 流星雨特效 */
+        .meteor { position: absolute; width: 3px; height: 150px; background: linear-gradient(to bottom, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0.5), transparent); border-radius: 50%; animation: meteor-fall linear infinite; opacity: 0; box-shadow: 0 0 10px rgba(255, 255, 255, 0.8); }
+        @keyframes meteor-fall { 0% { opacity: 1; transform: translateX(0) translateY(0) rotate(-45deg); } 70% { opacity: 0.8; } 100% { opacity: 0; transform: translateX(-500px) translateY(500px) rotate(-45deg); } }
+        .meteor:nth-child(1) { top: 5%; left: 10%; animation-duration: 1.8s; animation-delay: 0s; }
+        .meteor:nth-child(2) { top: 15%; left: 30%; animation-duration: 2.2s; animation-delay: 0.8s; }
+        .meteor:nth-child(3) { top: 8%; left: 50%; animation-duration: 2.5s; animation-delay: 1.5s; }
+        .meteor:nth-child(4) { top: 20%; left: 70%; animation-duration: 2s; animation-delay: 2.2s; }
+        .meteor:nth-child(5) { top: 12%; left: 85%; animation-duration: 2.3s; animation-delay: 3s; }
+        .meteor:nth-child(6) { top: 25%; left: 20%; animation-duration: 2.1s; animation-delay: 3.8s; }
+        .meteor:nth-child(7) { top: 18%; left: 45%; animation-duration: 2.4s; animation-delay: 4.5s; }
+        .meteor:nth-child(8) { top: 10%; left: 65%; animation-duration: 1.9s; animation-delay: 5.2s; }
+
+        /* 毛玻璃碎片 */
+        .glass-shards { position: absolute; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+        .shard { position: absolute; background: linear-gradient(135deg, rgba(79, 172, 254, 0.08), rgba(157, 127, 245, 0.05)); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); animation: shardFloat 25s infinite ease-in-out; }
+        .shard:nth-child(1) { width: 180px; height: 180px; top: 5%; left: 10%; clip-path: polygon(30% 0%, 70% 10%, 100% 40%, 90% 80%, 50% 100%, 10% 90%, 0% 50%); animation-delay: 0s; }
+        .shard:nth-child(2) { width: 140px; height: 200px; top: 50%; left: 5%; clip-path: polygon(50% 0%, 90% 20%, 100% 60%, 75% 100%, 25% 100%, 0% 60%, 10% 20%); animation-delay: -8s; }
+        .shard:nth-child(3) { width: 220px; height: 160px; top: 10%; right: 8%; clip-path: polygon(20% 0%, 80% 0%, 100% 50%, 80% 100%, 20% 100%, 0% 50%); animation-delay: -15s; }
+        .shard:nth-child(4) { width: 150px; height: 150px; bottom: 10%; right: 15%; clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); animation-delay: -20s; }
+        .shard:nth-child(5) { width: 190px; height: 130px; top: 40%; left: 3%; clip-path: polygon(40% 0%, 100% 20%, 90% 70%, 30% 100%, 0% 60%); animation-delay: -10s; }
+        .shard:nth-child(6) { width: 130px; height: 180px; bottom: 15%; left: 45%; clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%); animation-delay: -18s; }
+        @keyframes shardFloat { 0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.4; } 25% { transform: translateY(-25px) rotate(3deg); opacity: 0.6; } 50% { transform: translateY(-40px) rotate(-2deg); opacity: 0.5; } 75% { transform: translateY(-20px) rotate(4deg); opacity: 0.7; } }
+
+        /* 登录框 */
+        .glass-box { position: relative; z-index: 10; background: rgba(15, 25, 50, 0.4); backdrop-filter: blur(20px) saturate(180%); border: 2px solid rgba(255, 255, 255, 0.1); padding: 45px 40px; border-radius: 20px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(255,255,255,0.05); text-align: center; width: 380px; animation: boxAppear 0.8s ease-out; }
+        @keyframes boxAppear { from { opacity: 0; transform: scale(0.9) translateY(20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        
+        .glass-box::before { content: ''; position: absolute; top: -2px; left: -2px; right: -2px; bottom: -2px; background: linear-gradient(45deg, #00f5ff, #0080ff, #00f5ff, #0080ff); border-radius: 20px; z-index: -1; opacity: 0.3; filter: blur(10px); animation: borderGlow 3s linear infinite; }
+        @keyframes borderGlow { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.6; } }
+
+        h2 { margin-bottom: 30px; font-weight: 700; font-size: 1.6rem; display: flex; align-items: center; justify-content: center; gap: 10px; text-shadow: 0 0 20px rgba(0, 245, 255, 0.5); letter-spacing: 2px; }
+        h2::before { content: '🔒'; font-size: 1.4rem; filter: drop-shadow(0 0 10px rgba(0, 245, 255, 0.8)); }
+
+        input { width: 100%; padding: 14px 18px; margin-bottom: 20px; border-radius: 12px; border: 1px solid rgba(0, 245, 255, 0.3); background: rgba(10, 20, 40, 0.6); color: white; text-align: center; font-size: 1rem; outline: none; transition: all 0.3s; backdrop-filter: blur(5px); }
+        input:focus { border-color: #00f5ff; background: rgba(10, 20, 40, 0.8); box-shadow: 0 0 20px rgba(0, 245, 255, 0.4), inset 0 0 10px rgba(0, 245, 255, 0.1); }
+        input::placeholder { color: rgba(255, 255, 255, 0.5); }
+
+        .btn-group { display: flex; flex-direction: column; gap: 12px; }
+        button { width: 100%; padding: 14px; border-radius: 12px; border: none; cursor: pointer; font-size: 1rem; transition: all 0.3s; font-weight: 600; position: relative; overflow: hidden; }
+        button::before { content: ''; position: absolute; top: 50%; left: 50%; width: 0; height: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.3); transition: width 0.6s, height 0.6s, top 0.6s, left 0.6s; }
+        button:hover::before { width: 300px; height: 300px; top: -150px; left: -150px; }
+
+        .btn-primary { background: linear-gradient(135deg, rgba(0, 128, 255, 0.8), rgba(0, 245, 255, 0.6)); color: white; box-shadow: 0 4px 15px rgba(0, 128, 255, 0.4); border: 1px solid rgba(0, 245, 255, 0.3); }
+        .btn-primary:hover { box-shadow: 0 6px 25px rgba(0, 245, 255, 0.6); transform: translateY(-2px); }
+
+        .btn-unlock { background: linear-gradient(135deg, rgba(138, 43, 226, 0.8), rgba(75, 0, 130, 0.8)); color: white; box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4); border: 1px solid rgba(138, 43, 226, 0.5); }
+        .btn-unlock:hover { box-shadow: 0 6px 25px rgba(138, 43, 226, 0.6); transform: translateY(-2px); }
+
+        /* 修改部分开始：一行两个，平分宽度 */
+        .social-links { 
+            margin-top: 12px; 
+            display: flex; 
+            gap: 12px; /* 两个按钮之间的间距 */
+            /* 默认 flex-direction 就是 row，所以这里就是一行显示 */
+        }
+        
+        .pill { 
+            flex: 1; /* 让两个按钮自动平分宽度 */
+            background: linear-gradient(135deg, rgba(138, 43, 226, 0.8), rgba(75, 0, 130, 0.8)); 
+            backdrop-filter: blur(10px); 
+            padding: 14px; 
+            border-radius: 12px; /* 保持与上面按钮一致的方圆角 */
+            color: white; 
+            text-decoration: none; 
+            font-size: 0.9rem; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; /* 文字居中 */
+            gap: 4px; 
+            transition: all 0.3s; 
+            border: 1px solid rgba(138, 43, 226, 0.5); 
+            box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4); 
+            font-weight: 600;
+            white-space: nowrap; /* 防止文字换行 */
+        }
+        
+        .pill:hover { 
+            background: linear-gradient(135deg, rgba(138, 43, 226, 1), rgba(75, 0, 130, 1)); 
+            border-color: rgba(138, 43, 226, 0.8); 
+            color: white; 
+            box-shadow: 0 6px 25px rgba(138, 43, 226, 0.6); 
+            transform: translateY(-2px); 
+        }
+        /* 修改部分结束 */
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .glass-box { width: 90%; max-width: 380px; padding: 35px 25px; }
+            h2 { font-size: 1.4rem; }
+            input { padding: 12px 15px; font-size: 0.95rem; }
+            button { padding: 12px; font-size: 0.95rem; }
+            .pill { font-size: 0.85rem; padding: 12px 8px; } /* 手机端稍微减小内边距 */
+        }
+        @media (max-width: 480px) {
+            .glass-box { width: 95%; padding: 30px 20px; }
+            h2 { font-size: 1.2rem; margin-bottom: 20px; }
+            h2::before { font-size: 1.2rem; }
+            input { padding: 10px 12px; font-size: 0.9rem; margin-bottom: 15px; }
+            button { padding: 10px; font-size: 0.9rem; }
+            .btn-group { gap: 10px; }
+            .social-links { gap: 10px; margin-top: 10px; }
+            .pill { font-size: 0.8rem; padding: 10px 5px; }
+        }
+    </style>
 </head>
 <body>
-    <div id="cf-wrapper">
-        <div class="cf-alert cf-alert-error cf-cookie-error" id="cookie-alert" data-translate="enable_cookies">Please enable cookies.</div>
-        <div id="cf-error-details" class="cf-error-details-wrapper">
-            <div class="cf-wrapper cf-header cf-error-overview">
-                <h1>
-                    <span class="cf-error-type" data-translate="error">Error</span>
-                    <span class="cf-error-code">1101</span>
-                    <small class="heading-ray-id">Ray ID: ${随机字符串} &bull; ${格式化时间戳} UTC</small>
-                </h1>
-                <h2 class="cf-subheadline" data-translate="error_desc">Worker threw exception</h2>
-            </div><!-- /.header -->
-    
-            <section></section><!-- spacer -->
-    
-            <div class="cf-section cf-wrapper">
-                <div class="cf-columns two">
-                    <div class="cf-column">
-                        <h2 data-translate="what_happened">What happened?</h2>
-                            <p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
-                    </div>
-                    
-                    <div class="cf-column">
-                        <h2 data-translate="what_can_i_do">What can I do?</h2>
-                            <p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
-                    </div>
-                    
+    <div class="stars" id="starsContainer"></div>
+    <div class="stars">
+        <div class="meteor"></div><div class="meteor"></div><div class="meteor"></div><div class="meteor"></div>
+        <div class="meteor"></div><div class="meteor"></div><div class="meteor"></div><div class="meteor"></div>
+    </div>
+    <div class="glass-shards">
+        <div class="shard"></div><div class="shard"></div><div class="shard"></div>
+        <div class="shard"></div><div class="shard"></div><div class="shard"></div>
+    </div>
+
+    <div class="glass-box">
+        <h2>管理员登陆</h2>
+        <input type="password" id="pwd" placeholder="请输入密码" autofocus autocomplete="new-password" onkeypress="if(event.keyCode===13)verify()">
+        <div class="btn-group">
+            <button class="btn-unlock" onclick="verify()">立即登陆</button>
+            <button class="btn-primary" onclick="window.open('${siteUrl}', '_blank')">天诚网站</button>
+        </div>
+        <div class="social-links">
+            <a href="javascript:void(0)" onclick="gh()" class="pill">🔥 烈火项目直达</a>
+            <a href="${tgGroup}" target="_blank" class="pill">✈️ 天诚交流群</a>
+        </div>
+    </div>
+
+    <script>
+        function generateStars() {
+            const starsContainer = document.getElementById('starsContainer');
+            for (let i = 0; i < 200; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                star.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                const size = Math.random() * 2 + 1;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                starsContainer.appendChild(star);
+            }
+        }
+        generateStars();
+        function gh(){fetch("?flag=github&t="+Date.now(),{keepalive:!0});window.open("${githubUrl}","_blank")}
+        function verify(){
+            const p = document.getElementById("pwd").value;
+            if(!p) return;
+            document.cookie = "auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            document.cookie = "auth=" + p + "; path=/; SameSite=Lax";
+            sessionStorage.setItem("is_active", "1");
+            location.reload();
+        }
+        window.onload = function() {
+            if(!sessionStorage.getItem("is_active")) {
+                document.cookie = "auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            }
+        }
+    </script>
+</body>
+</html>`;
+}
+
+// 👇 修改：增加 proxyCheckUrl 参数
+function dashPage(host, uuid, proxyip, subpass, subdomain, converter, env, clientIP, hasAuth, tgState, cfState, add, addApi, addCsv, tgToken, tgId, cfId, cfToken, cfMail, cfKey, sysParams, dashTitle, proxyCheckUrl, dls) {
+    const defaultSubLink = `https://${host}/${subpass}`;
+    const pathParam = proxyip ? "/proxyip=" + proxyip : "/";
+    const longLink = `https://${subdomain}/sub?uuid=${uuid}&encryption=none&security=tls&sni=${host}&alpn=h3&fp=random&allowInsecure=1&type=ws&host=${host}&path=${encodeURIComponent(pathParam)}`;
+    const safeVal = (str) => (str || '').replace(/"/g, '&quot;');
+    const getStatusLabel = (val, sysVal) => { if (!val) return ""; if (val === sysVal) return `<span class="source-tag sys">🔒 系统预设 (不可删除)</span>`; return `<span class="source-tag man">💾 后台配置 (可清除)</span>`; };
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=0.5, user-scalable=yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>${dashTitle}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { display: none; opacity: 0; transition: opacity 0.3s; overflow-x: hidden; position: relative; }
+        body.loaded { display: block; opacity: 1; }
+
+        /* 玻璃态配色 - 柔和不刺眼 */
+        :root {
+            --glass-blue: #4facfe;
+            --glass-purple: #9d7ff5;
+            --glass-cyan: #43e9e5;
+            --glass-pink: #f093fb;
+            --glass-green: #4ade80;
+            --bg-dark: #0f0f23;
+            --bg-darker: #050510;
+            --card-bg: rgba(15, 20, 40, 0.4);
+            --text: #e8eaf6;
+            --text-dim: #9ca3af;
+            --border: rgba(79, 172, 254, 0.2);
+            --glow: rgba(79, 172, 254, 0.5);
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #f87171;
+        }
+        body.light {
+            /* 浅色主题 - 加深颜色变量以增强对比度 */
+            --glass-blue: #2563eb;
+            --glass-purple: #7c3aed;
+            --glass-cyan: #0891b2;
+            --glass-pink: #db2777;
+            --glass-green: #059669;
+            --bg-dark: #f8fafc;
+            --bg-darker: #f1f5f9;
+            --card-bg: rgba(255, 255, 255, 0.8);
+            --text: #0f172a;
+            --text-dim: #475569;
+            --border: rgba(37, 99, 235, 0.2);
+            --glow: rgba(37, 99, 235, 0.3);
+            --success: #059669;
+            --warning: #d97706;
+            --danger: #dc2626;
+        }
+        /* 👇 修改：白色主题背景改为天蓝色渐变 */
+        body.light {
+            background: linear-gradient(to bottom, #f0f9ff 0%, #bae6fd 50%, #38bdf8 100%);
+        }
+        body.light .shard {
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.06), rgba(124, 58, 237, 0.04));
+            border: 1px solid rgba(37, 99, 235, 0.15);
+            box-shadow: 0 8px 32px rgba(37, 99, 235, 0.1);
+        }
+
+        /* 白色模式输入框优化 */
+        body.light input,
+        body.light textarea,
+        body.light select {
+            background: rgba(255, 255, 255, 0.95);
+            color: #0f172a;
+            border-color: rgba(37, 99, 235, 0.25);
+        }
+        body.light input:focus,
+        body.light textarea:focus,
+        body.light select:focus {
+            background: rgba(255, 255, 255, 1);
+            border-color: var(--glass-blue);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* 白色模式系统状态优化 */
+        body.light .stat-box {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+        }
+        body.light .stat-box:hover {
+            background: rgba(255, 255, 255, 0.9);
+            border-color: var(--glass-blue);
+        }
+        body.light .stat-value {
+            color: #1e40af;
+            font-weight: 700;
+        }
+        body.light .stat-label {
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        /* 黑色模式系统状态优化 */
+        body:not(.light) .stat-value {
+            color: var(--glass-cyan);
+            font-weight: 700;
+            text-shadow: 0 0 10px rgba(67, 233, 229, 0.3);
+        }
+        body:not(.light) .stat-label {
+            color: #cbd5e1;
+            font-weight: 600;
+        }
+
+        /* 白色模式日志优化 */
+        body.light .log-entry {
+            background: rgba(255, 255, 255, 0.9);
+            border-color: rgba(37, 99, 235, 0.2);
+        }
+        body.light .log-entry:hover {
+            background: rgba(255, 255, 255, 1);
+            border-color: var(--glass-blue);
+        }
+        body.light .log-time {
+            color: #1e40af;
+            font-weight: 600;
+        }
+        body.light .log-ip {
+            color: #0891b2;
+            font-weight: 600;
+        }
+        body.light .log-loc {
+            color: #059669;
+            font-weight: 500;
+        }
+        body.light .log-box {
+            background: rgba(255, 255, 255, 0.95);
+            border-color: rgba(37, 99, 235, 0.2);
+            color: #0f172a;
+        }
+
+        /* 黑色模式日志优化 */
+        body:not(.light) .log-time {
+            color: var(--glass-cyan);
+            font-weight: 600;
+        }
+        body:not(.light) .log-ip {
+            color: var(--glass-blue);
+            font-weight: 600;
+        }
+        body:not(.light) .log-loc {
+            color: var(--glass-green);
+            font-weight: 500;
+        }
+
+        /* 深色星空背景 */
+        body {
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+            color: var(--text);
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* 白色模式星空背景 */
+        body.light {
+            background: radial-gradient(ellipse at top, #e0f2fe 0%, #ddd6fe 50%, #fce7f3 100%);
+        }
+
+        /* 星星背景 */
+        .stars {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 999;
+            overflow: hidden;
+        }
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite;
+            box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+        }
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.2; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.5); }
+        }
+
+        /* 流星雨特效 - 全屏真实效果 */
+        .meteor {
+            position: absolute;
+            width: 3px;
+            height: 150px;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0.5), transparent);
+            border-radius: 50%;
+            animation: meteor-fall linear infinite;
+            opacity: 0;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+        }
+        @keyframes meteor-fall {
+            0% {
+                opacity: 1;
+                transform: translateX(0) translateY(0) rotate(-45deg);
+            }
+            70% {
+                opacity: 0.8;
+            }
+            100% {
+                opacity: 0;
+                transform: translateX(-500px) translateY(500px) rotate(-45deg);
+            }
+        }
+        /* 更多流星，覆盖全屏 */
+        .meteor:nth-child(1) { top: 5%; left: 10%; animation-duration: 1.8s; animation-delay: 0s; }
+        .meteor:nth-child(2) { top: 15%; left: 30%; animation-duration: 2.2s; animation-delay: 0.8s; }
+        .meteor:nth-child(3) { top: 8%; left: 50%; animation-duration: 2.5s; animation-delay: 1.5s; }
+        .meteor:nth-child(4) { top: 20%; left: 70%; animation-duration: 2s; animation-delay: 2.2s; }
+        .meteor:nth-child(5) { top: 12%; left: 85%; animation-duration: 2.3s; animation-delay: 3s; }
+        .meteor:nth-child(6) { top: 25%; left: 20%; animation-duration: 2.1s; animation-delay: 3.8s; }
+        .meteor:nth-child(7) { top: 18%; left: 45%; animation-duration: 2.4s; animation-delay: 4.5s; }
+        .meteor:nth-child(8) { top: 10%; left: 65%; animation-duration: 1.9s; animation-delay: 5.2s; }
+        .meteor:nth-child(9) { top: 22%; left: 80%; animation-duration: 2.6s; animation-delay: 6s; }
+        .meteor:nth-child(10) { top: 7%; left: 35%; animation-duration: 2.2s; animation-delay: 6.8s; }
+
+        /* 白色模式流星 */
+        body.light .meteor {
+            background: linear-gradient(to bottom, rgba(37, 99, 235, 1), rgba(37, 99, 235, 0.5), transparent);
+            box-shadow: 0 0 10px rgba(37, 99, 235, 0.6);
+        }
+        body.light .star {
+            background: rgba(37, 99, 235, 0.5);
+            box-shadow: 0 0 4px rgba(37, 99, 235, 0.6);
+        }
+
+        /* 玻璃碎裂动态背景 */
+        .glass-shards-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 1;
+            pointer-events: none;
+        }
+        .shard {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.08), rgba(157, 127, 245, 0.05));
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            animation: shardFloat 25s infinite ease-in-out;
+        }
+        .shard:nth-child(1) { width: 180px; height: 180px; top: 5%; left: 10%; clip-path: polygon(30% 0%, 70% 10%, 100% 40%, 90% 80%, 50% 100%, 10% 90%, 0% 50%); animation-delay: 0s; }
+        .shard:nth-child(2) { width: 140px; height: 200px; top: 50%; left: 5%; clip-path: polygon(50% 0%, 90% 20%, 100% 60%, 75% 100%, 25% 100%, 0% 60%, 10% 20%); animation-delay: -8s; }
+        .shard:nth-child(3) { width: 220px; height: 160px; top: 10%; right: 8%; clip-path: polygon(20% 0%, 80% 0%, 100% 50%, 80% 100%, 20% 100%, 0% 50%); animation-delay: -15s; }
+        .shard:nth-child(4) { width: 150px; height: 150px; bottom: 10%; right: 15%; clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); animation-delay: -20s; }
+        .shard:nth-child(5) { width: 190px; height: 130px; top: 40%; left: 3%; clip-path: polygon(40% 0%, 100% 20%, 90% 70%, 30% 100%, 0% 60%); animation-delay: -10s; }
+        .shard:nth-child(6) { width: 130px; height: 180px; bottom: 15%; left: 45%; clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%); animation-delay: -18s; }
+        .shard:nth-child(7) { width: 170px; height: 140px; top: 70%; right: 25%; clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); animation-delay: -5s; }
+        @keyframes shardFloat {
+            0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.4; }
+            25% { transform: translateY(-25px) rotate(3deg); opacity: 0.6; }
+            50% { transform: translateY(-40px) rotate(-2deg); opacity: 0.5; }
+            75% { transform: translateY(-20px) rotate(4deg); opacity: 0.7; }
+        }
+
+        /* 主容器 - 侧边栏布局 */
+        .container {
+            position: relative;
+            z-index: 2;
+            min-height: 100vh;
+            display: flex;
+            gap: 20px;
+            /* 👇 增加顶部Padding，并设置最大宽度用于超大屏适配 */
+            padding: 100px 20px 20px 20px;
+            max-width: 1920px;
+            margin: 0 auto;
+        }
+
+        /* 左侧边栏 - 玻璃态 */
+        .sidebar {
+            width: 280px;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 25px 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            height: fit-content;
+            position: sticky;
+            /* 👇 修改Sticky偏移量，使其与主内容对齐 */
+            top: 100px;
+            flex-shrink: 0;
+        }
+
+        /* 顶部工具栏（右上角固定，带边框容器） */
+        .top-nav {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            display: flex;
+            gap: 8px;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        /* 工具按钮组（右上角固定） */
+        .top-tools {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .tool-btn {
+            width: 42px;
+            height: 42px;
+            background: rgba(79, 172, 254, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            flex-shrink: 0;
+        }
+        .tool-btn:hover {
+            background: rgba(79, 172, 254, 0.25);
+            border-color: var(--glass-blue);
+            box-shadow: 0 4px 15px var(--glow);
+            transform: translateY(-2px);
+        }
+        .tool-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* 👇 修改：退出按钮默认样式一致，悬浮变红 */
+        .tool-btn.logout {
+            border-color: rgba(248, 113, 113, 0.5); 
+            color: #f87171; 
+        }
+        .tool-btn.logout:hover {
+            background: rgba(248, 113, 113, 0.2);
+            border-color: var(--danger);
+            box-shadow: 0 4px 15px var(--danger);
+            color: white;
+        }
+
+        /* 侧边栏Logo */
+        .logo {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .logo-icon {
+            font-size: 3rem;
+            filter: drop-shadow(0 0 15px var(--glass-blue));
+            animation: logoFloat 3s ease-in-out infinite;
+        }
+        @keyframes logoFloat {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-8px) rotate(5deg); }
+        }
+        .logo-text {
+            /* 👇 增大字号 */
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan), var(--glass-pink));
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 2px;
+            text-align: center;
+            animation: logoGradient 4s ease infinite;
+            /* 👇 优化滤镜，去除模糊，改为清晰阴影 */
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+        }
+        @keyframes logoGradient {
+            0% {
+                background-position: 0% 50%;
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+            }
+            25% {
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+            }
+            50% {
+                background-position: 100% 50%;
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+            }
+            75% {
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+            }
+            100% {
+                background-position: 0% 50%;
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+            }
+        }
+        
+        /* 👇 针对白色模式的Logo优化：恢复动态渐变，使用深色变量，增加微阴影 */
+        body.light .logo-text {
+            background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan), var(--glass-pink));
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: logoGradient 4s ease infinite;
+            filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2)); /* 轻微阴影增加对比度，去除模糊光晕 */
+            text-shadow: none;
+        }
+        body.light .logo-icon {
+            filter: drop-shadow(0 0 10px rgba(37, 99, 235, 0.6));
+        }
+
+        .logo-sub {
+            /* 👇 稍微增大副标题 */
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            text-align: center;
+            font-weight: 500;
+        }
+        /* 白色模式Logo优化 */
+        body.light .logo-sub {
+            color: #64748b;
+        }
+
+        /* 导航菜单 - 垂直列表 */
+        .nav-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .nav-item {
+            /* 👇 增大Padding和字号 */
+            padding: 14px 20px;
+            background: rgba(79, 172, 254, 0.05);
+            border: 1px solid transparent;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 15px; /* 增加图标和文字间距 */
+            color: var(--text);
+            position: relative;
+            overflow: hidden;
+        }
+        /* 菜单文字幻彩渐变 */
+        .nav-item {
+            background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan), var(--glass-pink));
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: menuTextGradient 5s ease infinite;
+        }
+        @keyframes menuTextGradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        /* 白色模式菜单文字优化 - 纯色深色文字 */
+        body.light .nav-item {
+            background: none;
+            -webkit-background-clip: unset;
+            -webkit-text-fill-color: unset;
+            background-clip: unset;
+            color: #1e293b;
+            font-weight: 700;
+            animation: none;
+        }
+        body.light .nav-item:hover {
+            color: #0f172a;
+        }
+        body.light .nav-item.active {
+            color: #ffffff;
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+        }
+        body.light .nav-item.active .icon,
+        body.light .nav-item.active {
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            -webkit-background-clip: unset;
+            -webkit-text-fill-color: unset;
+            background-clip: unset;
+            color: #ffffff;
+            animation: none;
+        }
+        /* 恢复背景 */
+        .nav-item::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(79, 172, 254, 0.05);
+            border-radius: 12px;
+            z-index: -1;
+        }
+        body.light .nav-item::after {
+            background: rgba(37, 99, 235, 0.08);
+        }
+        /* 波纹点击效果 */
+        .nav-item::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        .nav-item:active::before {
+            width: 300px;
+            height: 300px;
+        }
+        .nav-item:hover {
+            background: rgba(79, 172, 254, 0.15);
+            border-color: var(--glass-blue);
+            transform: translateX(5px);
+            box-shadow: 0 4px 15px var(--glow);
+        }
+        .nav-item.active {
+            background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple));
+            border-color: var(--glass-blue);
+            color: white;
+            box-shadow: 0 4px 20px var(--glow);
+            transform: translateX(5px);
+            animation: gradientShift 3s ease infinite;
+            background-size: 200% 200%;
+        }
+        /* 激活菜单文字幻彩渐变 */
+        .nav-item.active .icon,
+        .nav-item.active {
+            background: linear-gradient(135deg, #fff, #e0f2fe, #ddd6fe, #fce7f3, #fff);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: textGradientShift 4s ease infinite;
+        }
+        /* 文字渐变动画 */
+        @keyframes textGradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        /* 幻彩渐变动画 */
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+                background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan));
+            }
+            33% {
+                background-position: 50% 50%;
+                background: linear-gradient(135deg, var(--glass-purple), var(--glass-cyan), var(--glass-pink));
+            }
+            66% {
+                background-position: 100% 50%;
+                background: linear-gradient(135deg, var(--glass-cyan), var(--glass-pink), var(--glass-blue));
+            }
+            100% {
+                background-position: 0% 50%;
+                background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan));
+            }
+        }
+        .nav-item.active::after {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--glass-cyan), var(--glass-blue), var(--glass-purple), var(--glass-pink), var(--glass-cyan));
+            border-radius: 12px;
+            z-index: -1;
+            opacity: 0.5;
+            filter: blur(8px);
+            animation: borderGlow 3s linear infinite;
+            background-size: 300% 300%;
+        }
+        @keyframes borderGlow {
+            0% { opacity: 0.3; background-position: 0% 50%; }
+            50% { opacity: 0.6; background-position: 100% 50%; }
+            100% { opacity: 0.3; background-position: 0% 50%; }
+        }
+        
+        /* 👇 修复暗色模式图标显示为方块的问题 */
+        .nav-item .icon {
+            /* 👇 增大图标 */
+            font-size: 1.4rem;
+            width: 24px;
+            text-align: center;
+            /* 关键修复：重置背景裁剪和填充颜色 */
+            background: none;
+            -webkit-background-clip: initial;
+            -webkit-text-fill-color: initial;
+            color: #e8eaf6; /* 设置为淡白色 */
+            text-shadow: 0 0 10px var(--glass-blue); /* 添加发光使其协调 */
+        }
+        
+        /* 激活状态下的图标颜色 */
+        .nav-item.active .icon {
+            background: none;
+            -webkit-text-fill-color: initial;
+            color: #ffffff;
+        }
+
+        /* 白色模式下的图标保持原样(代码里已经有针对body.light的处理，只需微调确保优先级) */
+        body.light .nav-item .icon {
+            color: #2563eb;
+            text-shadow: none;
+        }
+
+        /* 主内容区 */
+        .main-content {
+            flex: 1;
+            display: block;
+            width: 100%;
+            min-width: 0;
+            /* 👇 移除了 padding-top，由容器统一控制 */
+        }
+
+        /* 工具按钮提示 */
+        .tool-btn::before {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.9);
+            color: var(--glass-cyan);
+            font-size: 11px;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            visibility: hidden;
+            transition: 0.2s;
+            z-index: 10;
+            border: 1px solid var(--glass-cyan);
+            border-radius: 6px;
+        }
+        .tool-btn:hover::before { opacity: 1; visibility: visible; }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            animation: statusPulse 1.5s ease-in-out infinite;
+        }
+        @keyframes statusPulse {
+            0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 5px currentColor; }
+            50% { opacity: 0.5; transform: scale(1.3); box-shadow: 0 0 15px currentColor; }
+        }
+        .status-dot.on {
+            background-color: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+        .status-dot.off {
+            background-color: var(--danger);
+            box-shadow: 0 0 10px var(--danger);
+        }
+
+        /* 主内容区 - 网格布局 */
+        .main-content {
+            display: block;
+            width: 100%;
+        }
+
+        /* 3D 球体统计卡片 */
+        .sphere-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 30px;
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s;
+            overflow: hidden;
+        }
+        .sphere-card:hover {
+            border-color: var(--glass-blue);
+            box-shadow: 0 12px 40px var(--glow);
+            transform: translateY(-5px);
+        }
+        .sphere-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan));
+            opacity: 0.6;
+        }
+
+        /* 3D 圆环统计球体 - 优化版 */
+        .stats-sphere {
+            width: 240px;
+            height: 240px;
+            margin: 25px auto 15px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .sphere-ring {
+            position: absolute;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            animation: sphereRotate 8s linear infinite;
+            will-change: transform;
+        }
+        .sphere-ring:nth-child(1) {
+            width: 220px;
+            height: 220px;
+            border-top-color: var(--glass-blue);
+            border-right-color: var(--glass-blue);
+            animation-duration: 6s;
+        }
+        .sphere-ring:nth-child(2) {
+            width: 185px;
+            height: 185px;
+            border-bottom-color: var(--glass-purple);
+            border-left-color: var(--glass-purple);
+            animation-duration: 8s;
+            animation-direction: reverse;
+        }
+        .sphere-ring:nth-child(3) {
+            width: 150px;
+            height: 150px;
+            border-top-color: var(--glass-cyan);
+            border-bottom-color: var(--glass-cyan);
+            animation-duration: 10s;
+        }
+        @keyframes sphereRotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 球体中心 - 修正版：绝对居中，增加Padding防止触碰圆环 */
+        .sphere-center {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 18%; /* 动态Padding，确保文字永远在圆环内 */
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        /* 球体数字 - 修正版：智能换行，动态字号 */
+        .sphere-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--glass-cyan);
+            text-shadow: 0 0 20px rgba(67, 233, 229, 0.5);
+            font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
+            line-height: 1.1; /* 紧凑行高，适应多行显示 */
+            word-wrap: break-word; /* 允许单词内换行 */
+            word-break: break-word; /* 强制长单词/数字断行，防止溢出 */
+            overflow-wrap: break-word; /* 现代浏览器断行支持 */
+            white-space: normal; /* 允许自然换行 */
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            text-align: center;
+            margin: 0 auto;
+        }
+
+        /* 根据内容长度自动缩小字体 - 针对桌面端微调 */
+        .sphere-value[data-length="short"] { font-size: 3rem; }
+        .sphere-value[data-length="medium"] { font-size: 2.2rem; }
+        .sphere-value[data-length="long"] { font-size: 1.6rem; }
+        .sphere-value[data-length="verylong"] { font-size: 1.2rem; }
+
+        /* 球体下方标签 */
+        .sphere-labels {
+            text-align: center;
+            margin-top: 10px;
+        }
+        .sphere-label {
+            font-size: 1rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            line-height: 1.5;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .sphere-subtitle {
+            font-size: 0.85rem;
+            color: var(--glass-cyan);
+            line-height: 1.4;
+            opacity: 0.95;
+            display: block;
+        }
+
+        /* 玻璃态卡片样式 */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 25px;
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s;
+            overflow: hidden;
+        }
+        .card:hover {
+            border-color: var(--glass-blue);
+            box-shadow: 0 12px 40px var(--glow);
+            transform: translateY(-3px);
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--glass-blue), var(--glass-purple), var(--glass-cyan));
+            opacity: 0.6;
+        }
+
+        /* 卡片标题 */
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-shadow: 0 2px 8px rgba(79, 172, 254, 0.5);
+        }
+        .card-title .icon {
+            font-size: 1.3rem;
+            filter: drop-shadow(0 0 10px var(--glass-cyan));
+        }
+
+        /* 白色模式标题 */
+        body.light .card-title {
+            color: #000000;
+            text-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+        }
+
+        /* 统计面板 */
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: rgba(79, 172, 254, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .stat-box:hover {
+            background: rgba(79, 172, 254, 0.1);
+            border-color: var(--glass-blue);
+            transform: translateY(-3px);
+            box-shadow: 0 5px 20px var(--glow);
+        }
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--glass-cyan), var(--glass-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+            display: block;
+        }
+        .stat-value.ip-value {
+            font-size: clamp(0.75rem, 2vw, 1rem);
+            word-break: break-all;
+            white-space: normal;
+            line-height: 1.3;
+            max-height: 2.6em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        /* 输入框样式 */
+        .input-block { margin-bottom: 15px; }
+        label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--glass-cyan);
+            margin-bottom: 8px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            background: rgba(15, 20, 40, 0.6);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            padding: 12px 15px;
+            font-family: 'Courier New', monospace;
+            outline: none;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+        }
+        input[type="text"]:focus, textarea:focus {
+            border-color: var(--glass-blue);
+            background: rgba(15, 20, 40, 0.9);
+            box-shadow: 0 0 20px var(--glow);
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        .input-group-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .input-group-row input { flex: 1; }
+
+        /* 按钮样式 */
+        .btn {
+            padding: 12px 20px;
+            border: 1px solid;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.4s, height 0.4s;
+            border-radius: 50%;
+        }
+        .btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--glass-blue), var(--glass-purple));
+            border-color: var(--glass-blue);
+            color: white;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 0 25px var(--glow);
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            background: linear-gradient(135deg, var(--glass-cyan), var(--glass-blue));
+            border-color: var(--glass-cyan);
+            color: white;
+        }
+        .btn-secondary:hover {
+            box-shadow: 0 0 25px rgba(67, 233, 229, 0.5);
+            transform: translateY(-2px);
+        }
+        .btn-success {
+            background: linear-gradient(135deg, var(--glass-green), #22c55e);
+            border-color: var(--success);
+            color: white;
+        }
+        .btn-success:hover {
+            box-shadow: 0 0 25px var(--success);
+            transform: translateY(-2px);
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger), #dc2626);
+            border-color: var(--danger);
+            color: white;
+        }
+        .btn-danger:hover {
+            box-shadow: 0 0 25px var(--danger);
+            transform: translateY(-2px);
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .btn-group .btn {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        /* 日志和表格 */
+        .log-box {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            max-height: 300px;
+            overflow-y: auto;
+            background: rgba(15, 20, 40, 0.6);
+            padding: 15px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .log-entry {
+            border-bottom: 1px solid rgba(79, 172, 254, 0.2);
+            padding: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            transition: 0.3s;
+        }
+        .log-entry:hover {
+            background: rgba(79, 172, 254, 0.1);
+            padding-left: 10px;
+            border-left: 2px solid var(--glass-cyan);
+        }
+        .log-time { color: var(--glass-cyan); width: 150px; font-size: 0.85rem; }
+        .log-ip { color: var(--text); width: 200px; font-family: monospace; }
+        .log-loc { color: var(--text-dim); flex: 1; font-size: 0.85rem; }
+        .log-tag {
+            padding: 4px 10px;
+            background: linear-gradient(135deg, var(--warning), #d97706);
+            color: #000;
+            font-size: 0.75rem;
+            font-weight: 700;
+            border-radius: 6px;
+            box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+        }
+        .log-tag.green {
+            background: linear-gradient(135deg, var(--success), #22c55e);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        .wl-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 10px; }
+        .wl-table th, .wl-table td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .wl-table th {
+            color: var(--glass-cyan);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.75rem;
+        }
+        .wl-table tr:hover { background: rgba(79, 172, 254, 0.05); }
+        .btn-del {
+            background: linear-gradient(135deg, var(--danger), #dc2626);
+            color: white;
+            border: 1px solid var(--danger);
+            border-radius: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            transition: 0.3s;
+            box-shadow: 0 0 10px rgba(248, 113, 113, 0.3);
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .btn-del:hover {
+            box-shadow: 0 0 20px var(--danger);
+            transform: scale(1.05);
+        }
+        .sys-tag {
+            background: linear-gradient(135deg, #64748b, #475569);
+            color: white;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            border-radius: 6px;
+            box-shadow: 0 0 8px rgba(100, 116, 139, 0.3);
+        }
+        .source-tag { font-size: 0.75rem; margin-top: 4px; display: block; }
+        .source-tag.sys { color: var(--warning); text-shadow: 0 0 8px var(--warning); }
+        .source-tag.man { color: var(--success); text-shadow: 0 0 8px var(--success); }
+
+        /* 模态框 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal.show { display: flex; }
+        .modal-content {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+            border: 2px solid var(--border);
+            border-radius: 20px;
+            box-shadow: 0 10px 50px var(--glow);
+            position: relative;
+            overflow: hidden; /* Added overflow: hidden to clip the top line */
+        }
+        .modal-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--glass-blue), var(--glass-cyan));
+            box-shadow: 0 0 15px var(--glass-blue);
+        }
+        .modal-head {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            font-weight: 700;
+            font-size: 1.2rem;
+            align-items: center;
+            background: linear-gradient(135deg, var(--glass-cyan), var(--glass-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .modal-head span { display: flex; align-items: center; gap: 10px; }
+        .close-btn {
+            cursor: pointer;
+            color: var(--text);
+            font-size: 1.5rem;
+            transition: 0.3s;
+            width: 35px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .close-btn:hover {
+            color: var(--danger);
+            border-color: var(--danger);
+            box-shadow: 0 0 15px var(--danger);
+            transform: rotate(90deg);
+        }
+        .modal-btns { display: flex; gap: 10px; margin-top: 25px; flex-wrap: wrap; }
+        .modal-btns button { flex: 1; min-width: 100px; }
+
+        /* Toast提示 */
+        #toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, var(--success), #22c55e);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 12px;
+            opacity: 0;
+            transition: 0.3s;
+            pointer-events: none;
+            font-weight: 700;
+            box-shadow: 0 0 25px var(--success);
+            border: 2px solid var(--success);
+            z-index: 2000;
+        }
+
+        /* 响应式 - 全平台优化 */
+
+        /* 平板及以下 - 侧边栏变为顶部栏 */
+        @media (max-width: 1024px) {
+            .container {
+                flex-direction: column;
+                padding: 10px;
+                /* 👇 移动端无需超大顶部间距，已由布局自动处理 */
+                padding-top: 80px;
+            }
+            .sidebar {
+                width: 100%;
+                position: relative;
+                top: 0;
+                padding: 20px;
+            }
+            .logo {
+                flex-direction: row;
+                justify-content: center;
+                padding-bottom: 15px;
+                margin-bottom: 15px;
+            }
+            .logo-icon { font-size: 2rem; }
+            .logo-text { font-size: 1rem; }
+            .nav-menu {
+                flex-direction: row;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .nav-item {
+                flex: 1;
+                min-width: 120px;
+                justify-content: center;
+                padding: 10px;
+                font-size: 0.85rem;
+            }
+            .top-nav {
+                top: 10px;
+                right: 10px;
+                gap: 6px;
+                padding: 6px;
+            }
+            .tool-btn {
+                width: 38px;
+                height: 38px;
+                font-size: 1rem;
+            }
+            .content-section.active {
+                grid-template-columns: 1fr;
+            }
+            .stats-panel { grid-template-columns: repeat(2, 1fr); }
+            .stats-sphere { width: 220px; height: 220px; }
+            .sphere-ring:nth-child(1) { width: 200px; height: 200px; }
+            .sphere-ring:nth-child(2) { width: 165px; height: 165px; }
+            .sphere-ring:nth-child(3) { width: 130px; height: 130px; }
+        }
+
+        /* 手机端 */
+        @media (max-width: 768px) {
+            .container { padding: 8px; padding-top: 65px; }
+            .sidebar { padding: 15px; }
+            .nav-menu { flex-direction: column; }
+            .nav-item {
+                width: 100%;
+                min-width: auto;
+            }
+            .top-nav {
+                top: 8px;
+                right: 8px;
+                gap: 5px;
+                padding: 5px;
+                border-radius: 12px;
+            }
+            .tool-btn {
+                width: 36px;
+                height: 36px;
+                font-size: 0.95rem;
+                border-radius: 10px;
+            }
+            .tool-btn::before {
+                display: none;
+            }
+            .stats-panel { grid-template-columns: 1fr; }
+            .stats-sphere { width: 180px; height: 180px; margin: 20px auto 10px; }
+            .sphere-ring:nth-child(1) { width: 165px; height: 165px; border-width: 2.5px; }
+            .sphere-ring:nth-child(2) { width: 135px; height: 135px; border-width: 2.5px; }
+            .sphere-ring:nth-child(3) { width: 105px; height: 105px; border-width: 2.5px; }
+            
+            /* 手机端字号进一步缩小，防止溢出 */
+            .sphere-value[data-length="short"] { font-size: 2.5rem; }
+            .sphere-value[data-length="medium"] { font-size: 1.8rem; }
+            .sphere-value[data-length="long"] { font-size: 1.4rem; }
+            .sphere-value[data-length="verylong"] { font-size: 0.9rem; } /* 缩小到0.9rem，确保超长文本能容纳 */
+
+            .sphere-label { font-size: 0.85rem; }
+            .sphere-subtitle { font-size: 0.75rem; }
+            .input-group-row { flex-direction: column; }
+            .btn-group { flex-direction: column; }
+            .log-entry { flex-direction: column; align-items: flex-start; gap: 5px; }
+            .log-time, .log-ip, .log-loc { width: 100%; }
+            /* Mobile adjustments */
+            .main-content {
+                padding-top: 0; /* Reset for mobile since container handles it */
+            }
+        }
+
+        /* 小屏手机 */
+        @media (max-width: 480px) {
+            .container { padding-top: 60px; }
+            .top-nav {
+                top: 6px;
+                right: 6px;
+                gap: 4px;
+                padding: 4px;
+            }
+            .tool-btn {
+                width: 34px;
+                height: 34px;
+                font-size: 0.9rem;
+            }
+            .stats-sphere { width: 160px; height: 160px; }
+            .sphere-ring:nth-child(1) { width: 148px; height: 148px; border-width: 2px; }
+            .sphere-ring:nth-child(2) { width: 122px; height: 122px; border-width: 2px; }
+            .sphere-ring:nth-child(3) { width: 96px; height: 96px; border-width: 2px; }
+            
+            /* 超小屏字体调整 */
+            .sphere-value[data-length="short"] { font-size: 2rem; }
+            .sphere-value[data-length="medium"] { font-size: 1.5rem; }
+            .sphere-value[data-length="long"] { font-size: 1.2rem; }
+            .sphere-value[data-length="verylong"] { font-size: 0.8rem; } /* 极限压缩 */
+
+            .sphere-label { font-size: 0.75rem; letter-spacing: 1px; }
+            .sphere-subtitle { font-size: 0.68rem; }
+        }
+
+        /* 超小屏 */
+        @media (max-width: 360px) {
+            .top-nav {
+                top: 5px;
+                right: 5px;
+                gap: 3px;
+                padding: 3px;
+            }
+            .tool-btn {
+                width: 32px;
+                height: 32px;
+                font-size: 0.85rem;
+            }
+        }
+
+        /* 内容区显示控制 */
+        .content-section {
+            display: none;
+            opacity: 0;
+            animation: fadeOut 0.3s ease-out;
+        }
+        .content-section.active {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            opacity: 1;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* 淡入淡出动画 */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeOut {
+            from {
+                opacity: 1;
+                transform: translateY(0);
+            }
+            to {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+        }
+
+        /* 单列布局的面板 */
+        #section-subscription.active,
+        #section-whitelist.active,
+        #section-nodes.active,
+        #section-logs.active {
+            display: block;
+            opacity: 1;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        #section-subscription .card,
+        #section-whitelist .card,
+        #section-nodes .card,
+        #section-logs .card {
+            margin-bottom: 20px;
+            animation: slideInUp 0.6s ease-out;
+        }
+
+        /* 卡片滑入动画 */
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body id="mainBody">
+    <!-- 玻璃碎裂背景 -->
+    <div class="glass-shards-bg">
+        <div class="shard"></div>
+        <div class="shard"></div>
+        <div class="shard"></div>
+        <div class="shard"></div>
+        <div class="shard"></div>
+        <div class="shard"></div>
+        <div class="shard"></div>
+    </div>
+
+    <!-- 星空背景 -->
+    <div class="stars" id="starsContainer"></div>
+
+    <!-- 流星雨 -->
+    <div class="stars">
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+        <div class="meteor"></div>
+    </div>
+
+    <div class="container">
+        <!-- 左侧边栏 -->
+        <div class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">💎</div>
+                <div>
+                    <div class="logo-text">玻璃态控制台</div>
+                    <div class="logo-sub">GLASS DASHBOARD</div>
                 </div>
-            </div><!-- /.section -->
-    
-            <div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
-    <p class="text-13">
-      <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold"> ${随机字符串}</strong></span>
-      <span class="cf-footer-separator sm:hidden">&bull;</span>
-      <span id="cf-footer-item-ip" class="cf-footer-item hidden sm:block sm:mb-1">
-        Your IP:
-        <button type="button" id="cf-footer-ip-reveal" class="cf-footer-ip-reveal-btn">Click to reveal</button>
-        <span class="hidden" id="cf-footer-ip">${访问IP}</span>
-        <span class="cf-footer-separator sm:hidden">&bull;</span>
-      </span>
-      <span class="cf-footer-item sm:block sm:mb-1"><span>Performance &amp; security by</span> <a rel="noopener noreferrer" href="https://www.cloudflare.com/5xx-error-landing" id="brand_link" target="_blank">Cloudflare</a></span>
-      
-    </p>
-    <script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>
-  </div><!-- /.error-footer -->
+            </div>
+            <div class="nav-menu">
+                <div class="nav-item active" onclick="showSection('dashboard')">
+                    <span class="icon">📊</span> 控制台
+                </div>
+                <div class="nav-item" onclick="showSection('subscription')">
+                    <span class="icon">🚀</span> 订阅
+                </div>
+                <div class="nav-item" onclick="showSection('whitelist')">
+                    <span class="icon">🛡️</span> 白名单
+                </div>
+                <div class="nav-item" onclick="showSection('nodes')">
+                    <span class="icon">🛠️</span> 自定义节点
+                </div>
+                <div class="nav-item" onclick="showSection('logs')">
+                    <span class="icon">📋</span> 日志
+                </div>
+            </div>
+        </div>
 
-        </div><!-- /#cf-error-details -->
-    </div><!-- /#cf-wrapper -->
+        <!-- 右上角工具栏 -->
+        <div class="top-nav">
+            <button class="tool-btn" onclick="toggleTheme()" data-tooltip="切换主题">🌗</button>
+            <button class="tool-btn" onclick="showModal('tgModal')" data-tooltip="TG通知">🤖 <span class="status-dot ${tgState ? 'on' : 'off'}"></span></button>
+            <button class="tool-btn" onclick="showModal('cfModal')" data-tooltip="CF统计">☁️ <span class="status-dot ${cfState ? 'on' : 'off'}"></span></button>
+            <button class="tool-btn logout" onclick="logout()" data-tooltip="退出">⏻</button>
+        </div>
 
-     <script>
-    window._cf_translation = {};
-    
-    
-  </script> 
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <!-- 控制台面板 -->
+            <div id="section-dashboard" class="content-section active">
+                <!-- 3D 球体统计卡片 -->
+                <div class="sphere-card">
+                    <div class="stats-sphere">
+                        <div class="sphere-ring"></div>
+                        <div class="sphere-ring"></div>
+                        <div class="sphere-ring"></div>
+                        <div class="sphere-center">
+                            <div class="sphere-value" id="reqCount" data-length="short">0</div>
+                        </div>
+                    </div>
+                    <div class="sphere-labels">
+                        <div class="sphere-label">今日请求</div>
+                        <div class="sphere-subtitle">Cloudflare 统计</div>
+                    </div>
+                    <button class="btn btn-primary" style="width:100%;margin-top:20px" onclick="updateStats()">🔄 刷新统计</button>
+
+                    <!-- 系统状态 - 移到按钮下方 -->
+                    <div style="margin-top:25px;padding-top:20px;border-top:1px solid var(--border)">
+                        <div class="card-title" style="margin-bottom:15px"><span class="icon">📊</span> 系统状态</div>
+                        <div class="stats-panel">
+                            <div class="stat-box">
+                                <div class="stat-label">当前IP</div>
+                                <div class="stat-value ip-value" id="currentIp">...</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Google延迟</div>
+                                <div class="stat-value" id="googleStatus">...</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">存储状态</div>
+                                <div class="stat-value" id="kvStatus">...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 订阅管理面板 -->
+            <div id="section-subscription" class="content-section">
+                <div class="card">
+                    <div class="card-title"><span class="icon">🚀</span> 快速订阅</div>
+                    <div class="input-group-row" style="margin-bottom:15px">
+                        <input type="text" id="autoSub" value="${defaultSubLink}" readonly style="flex:1">
+                        <button class="btn btn-secondary" onclick="copyId('autoSub')">复制</button>
+                    </div>
+                    <div class="input-block">
+                        <label>订阅源地址 (Sub Domain)</label>
+                        <input type="text" id="subDom" value="${subdomain}" oninput="updateLink()">
+                    </div>
+                    <div class="input-block">
+                        <label>Worker 域名 (SNI/Host)</label>
+                        <input type="text" id="hostDom" value="${host}" oninput="updateLink()">
+                    </div>
+                    <div class="input-block">
+                        <label>ProxyIP (优选)</label>
+                        <div class="input-group-row">
+                            <input type="text" id="pIp" value="${proxyip}" oninput="updateLink()">
+                            <!-- 👇 修改：传入 proxyCheckUrl -->
+                            <button class="btn btn-primary" onclick="checkProxy()">检测</button>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px;font-size:0.85rem">
+                        <input type="checkbox" id="clashMode" onchange="toggleClash()">
+                        <label for="clashMode" style="margin:0;text-transform:none">启用 Clash 模式</label>
+                    </div>
+                    <div class="input-block">
+                        <label>手动订阅链接</label>
+                        <textarea id="finalLink">${longLink}</textarea>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-success" onclick="copyId('finalLink')">复制链接</button>
+                        <button class="btn btn-primary" onclick="testSub()">测试访问</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 白名单面板 -->
+            <div id="section-whitelist" class="content-section">
+                <div class="card">
+                    <div class="card-title"><span class="icon">🛡️</span> 白名单管理</div>
+                    <div class="input-group-row" style="margin-bottom:15px">
+                        <input type="text" id="newWhitelistIp" placeholder="输入 IP 地址 (IPv4/IPv6)">
+                        <button class="btn btn-success" onclick="addWhitelist()">添加</button>
+                        <button class="btn btn-secondary" onclick="loadWhitelist()">刷新</button>
+                    </div>
+                    <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border)">
+                        <table class="wl-table">
+                            <thead><tr><th>IP 地址</th><th style="width:100px">操作</th></tr></thead>
+                            <tbody id="whitelistBody"><tr><td colspan="2" style="text-align:center">加载中...</td></tr></tbody>
+                        </table>
+                    </div>
+                    <div style="font-size:0.75rem;color:var(--text-dim);margin-top:10px">💡 提示：系统内置 IP 需要修改代码或环境变量才能删除</div>
+                </div>
+            </div>
+
+            <!-- 节点配置面板 -->
+            <div id="section-nodes" class="content-section">
+                <div class="card">
+                    <div class="card-title"><span class="icon">🛠️</span> 优选IP与远程配置</div>
+                    <div style="font-size:0.8rem;color:var(--danger);margin-bottom:15px;padding:10px;background:rgba(255,0,64,0.1);border-left:3px solid var(--danger)">
+                        ⚠️ 注意：若要在此生效，请确保 Cloudflare 后台未设置对应环境变量 (ADD/ADDAPI/ADDCSV)
+                    </div>
+                    <div class="input-block">
+                        <label>ADD - 本地优选 IP (格式: IP:Port#Name，一行一个)</label>
+                        <textarea id="inpAdd" placeholder="1.1.1.1:443#US">${safeVal(add)}</textarea>
+                    </div>
+                    <div class="input-block">
+                        <label>ADDAPI - 远程优选 TXT 链接 (支持多行)</label>
+                        <textarea id="inpAddApi" placeholder="https://example.com/ips.txt">${safeVal(addApi)}</textarea>
+                    </div>
+                    <div class="input-block">
+                        <label>ADDCSV - 远程优选 CSV 链接 (支持多行)</label>
+                        <textarea id="inpAddCsv" placeholder="https://example.com/ips.csv">${safeVal(addCsv)}</textarea>
+                    </div>
+                    <!-- ⭐ 功能4: DLS 设置输入框 -->
+                    <div class="input-block">
+                        <label>DLS (ADDCSV专用) - 速度下限筛选 (单位: KB/s)</label>
+                        <input type="text" id="inpDls" placeholder="5000" value="${safeVal(dls)}">
+                    </div>
+                    <button class="btn btn-success" style="width:100%" onclick="saveNodeConfig()">💾 保存配置</button>
+                </div>
+            </div>
+
+            <!-- 日志面板 -->
+            <div id="section-logs" class="content-section">
+                <div class="card">
+                    <div class="card-title">
+                        <span><span class="icon">📋</span> 操作日志</span>
+                    </div>
+                    <div class="log-box" id="logBox">加载中...</div>
+                    <button class="btn btn-secondary" style="width:100%;margin-top:15px" onclick="loadLogs()">🔄 刷新日志</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TG配置模态框 -->
+    <div id="tgModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-head"><span>🤖 Telegram 通知配置</span><span class="close-btn" onclick="closeModal('tgModal')">×</span></div>
+            <div class="input-block">
+                <label>Bot Token</label>
+                <input type="text" id="tgToken" placeholder="123456:ABC-DEF..." value="${safeVal(tgToken)}">
+                ${getStatusLabel(tgToken, sysParams.tgToken)}
+            </div>
+            <div class="input-block">
+                <label>Chat ID</label>
+                <input type="text" id="tgId" placeholder="123456789" value="${safeVal(tgId)}">
+                ${getStatusLabel(tgId, sysParams.tgId)}
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-secondary" onclick="validateApi('tg')">验证</button>
+                <button class="btn btn-success" onclick="saveConfig({TG_BOT_TOKEN: val('tgToken'), TG_CHAT_ID: val('tgId')}, 'tgModal')">保存</button>
+                <button class="btn btn-danger" onclick="clearConfig('tg')">清除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CF配置模态框 -->
+    <div id="cfModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-head"><span>☁️ Cloudflare 统计配置</span><span class="close-btn" onclick="closeModal('cfModal')">×</span></div>
+            <div style="margin-bottom:20px;padding-bottom:15px;border-bottom:1px solid var(--border)">
+                <label>方案1: Account ID + API Token</label>
+                <input type="text" id="cfAcc" placeholder="Account ID" style="margin-bottom:10px" value="${safeVal(cfId)}">
+                ${getStatusLabel(cfId, sysParams.cfId)}
+                <input type="text" id="cfTok" placeholder="API Token" value="${safeVal(cfToken)}">
+                ${getStatusLabel(cfToken, sysParams.cfToken)}
+            </div>
+            <div class="input-block">
+                <label>方案2: Email + Global Key</label>
+                <input type="text" id="cfMail" placeholder="Email" style="margin-bottom:10px" value="${safeVal(cfMail)}">
+                ${getStatusLabel(cfMail, sysParams.cfMail)}
+                <input type="text" id="cfKey" placeholder="Global API Key" value="${safeVal(cfKey)}">
+                ${getStatusLabel(cfKey, sysParams.cfKey)}
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-secondary" onclick="validateApi('cf')">验证</button>
+                <button class="btn btn-success" onclick="saveConfig({CF_ID:val('cfAcc'), CF_TOKEN:val('cfTok'), CF_EMAIL:val('cfMail'), CF_KEY:val('cfKey')}, 'cfModal')">保存</button>
+                <button class="btn btn-danger" onclick="clearConfig('cf')">清除</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast">已复制</div>
+
+    <script>
+        const UUID = "${uuid}"; const CONVERTER = "${converter}"; const CLIENT_IP = "${clientIP}"; const HAS_AUTH = ${hasAuth};
+
+        // 页面加载
+        window.addEventListener('DOMContentLoaded', () => {
+            if (HAS_AUTH && !sessionStorage.getItem("is_active")) {
+                document.cookie = "auth=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+                window.location.reload();
+            } else {
+                document.body.classList.add('loaded');
+                if(!document.getElementById('subDom').value) updateLink();
+                generateStars();
+            }
+        });
+
+        // 生成星星背景
+        function generateStars() {
+            const starsContainer = document.getElementById('starsContainer');
+            const starCount = 300; // 增加到300颗星星，满屏效果
+            for (let i = 0; i < starCount; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                star.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                // 随机大小
+                const size = Math.random() * 2 + 1;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                starsContainer.appendChild(star);
+            }
+        }
+
+        // 工具函数
+        function val(id) { return document.getElementById(id).value; }
+        function showModal(id) { document.getElementById(id).classList.add('show'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+        // 动态调整球体数字大小，防止溢出
+        function adjustSphereValue(element, text) {
+            element.innerText = text;
+            const len = text.length;
+            if (len <= 5) {
+                element.setAttribute('data-length', 'short');
+            } else if (len <= 10) {
+                element.setAttribute('data-length', 'medium');
+            } else if (len <= 20) {
+                element.setAttribute('data-length', 'long');
+            } else {
+                element.setAttribute('data-length', 'verylong');
+            }
+        }
+
+        // 切换面板 - 修复为网格布局
+        function showSection(section) {
+            document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+            document.getElementById('section-' + section).classList.add('active');
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            event.target.closest('.nav-item').classList.add('active');
+        }
+
+        // 更新统计
+        async function updateStats() {
+            try {
+                const start = Date.now();
+                await fetch('https://www.google.com/generate_204', {mode: 'no-cors'});
+                document.getElementById('googleStatus').innerText = (Date.now() - start) + 'ms';
+            } catch (e) { document.getElementById('googleStatus').innerText = 'Timeout'; }
+            try {
+                const res = await fetch('?flag=stats');
+                const data = await res.json();
+                const reqCountEl = document.getElementById('reqCount');
+                adjustSphereValue(reqCountEl, data.req);
+                document.getElementById('currentIp').innerText = data.ip;
+                document.getElementById('kvStatus').innerText = data.hasKV ? 'D1/KV OK' : 'Missing';
+            } catch (e) {
+                const reqCountEl = document.getElementById('reqCount');
+                adjustSphereValue(reqCountEl, 'N/A');
+            }
+        }
+
+        // 加载日志
+        async function loadLogs() {
+            try {
+                const res = await fetch('?flag=get_logs');
+                const data = await res.json();
+                let html = '';
+                if (data.type === 'd1' && Array.isArray(data.logs)) {
+                    html = data.logs.map(log => "<div class='log-entry'><span class='log-time'>" + log.time + "</span><span class='log-ip'>" + log.ip + "</span><span class='log-loc'>" + log.region + "</span><span class='log-tag " + (log.action.includes('订阅')||log.action.includes('检测')?'green':'') + "'>" + log.action + "</span></div>").join('');
+                } else if (data.logs && typeof data.logs === 'string') {
+                    html = data.logs.split('\\n').filter(x=>x).slice(0, 50).map(line => {
+                        const p = line.split('|');
+                        return "<div class='log-entry'><span class='log-time'>" + p[0] + "</span><span class='log-ip'>" + p[1] + "</span><span class='log-loc'>" + p[2] + "</span><span class='log-tag " + (p[3].includes('订阅')||p[3].includes('检测')?'green':'') + "'>" + p[3] + "</span></div>";
+                    }).join('');
+                }
+                document.getElementById('logBox').innerHTML = html || '暂无日志';
+            } catch(e) { document.getElementById('logBox').innerText = '加载失败或未绑定 DB/KV'; }
+        }
+
+        // 加载白名单
+        async function loadWhitelist() {
+            try {
+                const res = await fetch('?flag=get_whitelist');
+                const data = await res.json();
+                const list = data.list || [];
+                const html = list.length ? list.map(item => {
+                    const actionHtml = item.type === 'system' ? '<span class="sys-tag">🔒 系统</span>' : "<button class='btn-del' onclick='delWhitelist(\\"" + item.ip + "\\")'>删除</button>";
+                    return "<tr><td>" + item.ip + "</td><td>" + actionHtml + "</td></tr>";
+                }).join('') : '<tr><td colspan="2" style="text-align:center">暂无白名单 IP</td></tr>';
+                document.getElementById('whitelistBody').innerHTML = html;
+            } catch(e) { document.getElementById('whitelistBody').innerHTML = '<tr><td colspan="2">加载失败</td></tr>'; }
+        }
+
+        async function addWhitelist() {
+            const ip = document.getElementById('newWhitelistIp').value.trim();
+            if(!ip) return;
+            try {
+                await fetch('?flag=add_whitelist', { method:'POST', body:JSON.stringify({ip}) });
+                document.getElementById('newWhitelistIp').value = '';
+                loadWhitelist();
+            } catch(e) { alert('添加失败'); }
+        }
+
+        async function delWhitelist(ip) {
+            if(!confirm('确定移除 '+ip+'?')) return;
+            try {
+                await fetch('?flag=del_whitelist', { method:'POST', body:JSON.stringify({ip}) });
+                loadWhitelist();
+            } catch(e) { alert('删除失败'); }
+        }
+
+        // ProxyIP检测
+        async function checkProxy() {
+            const val = document.getElementById('pIp').value;
+            if(val) {
+                try { await navigator.clipboard.writeText(val); alert("✅ ProxyIP 已复制\\n\\n点击确定跳转检测网站..."); }
+                catch(e) { alert("跳转检测网站..."); }
+                fetch('?flag=log_proxy_check');
+                window.open("${proxyCheckUrl}", "_blank");
+            }
+        }
+
+        function testSub() {
+            const url = document.getElementById('finalLink').value;
+            if(url) { fetch('?flag=log_sub_test'); window.open(url); }
+        }
+
+        // 保存配置
+        async function saveConfig(data, modalId) {
+            try {
+                await fetch('?flag=save_config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                alert('保存成功');
+                if(modalId) closeModal(modalId);
+                setTimeout(() => location.reload(), 500);
+            } catch(e) { alert('保存失败: ' + e); }
+        }
+
+        // ⭐ 功能4: 保存 DLS 配置
+        function saveNodeConfig() {
+            const data = { ADD: val('inpAdd'), ADDAPI: val('inpAddApi'), ADDCSV: val('inpAddCsv'), DLS: val('inpDls') };
+            saveConfig(data, null);
+        }
+
+        async function clearConfig(type) {
+            if(!confirm('确定清除后台配置？')) return;
+            let data = {};
+            if(type === 'tg') data = { TG_BOT_TOKEN: "", TG_CHAT_ID: "" };
+            if(type === 'cf') data = { CF_ID: "", CF_TOKEN: "", CF_EMAIL: "", CF_KEY: "" };
+            saveConfig(data, type + 'Modal');
+        }
+
+        async function validateApi(type) {
+            const endpoint = type === 'tg' ? 'validate_tg' : 'validate_cf';
+            let payload = {};
+            if(type === 'tg') payload = { TG_BOT_TOKEN: val('tgToken'), TG_CHAT_ID: val('tgId') };
+            else payload = { CF_ID:val('cfAcc'), CF_TOKEN:val('cfTok'), CF_EMAIL:val('cfMail'), CF_KEY:val('cfKey') };
+            try {
+                const res = await fetch('?flag=' + endpoint, { method:'POST', body:JSON.stringify(payload) });
+                const d = await res.json();
+                alert(d.msg || (d.success ? '验证通过' : '验证失败'));
+            } catch(e) { alert('请求错误'); }
+        }
+
+        function toggleTheme() { document.body.classList.toggle('light'); }
+
+        // 更新订阅链接
+        function updateLink() {
+            let base = document.getElementById('subDom').value.trim() || document.getElementById('hostDom').value.trim();
+            let host = document.getElementById('hostDom').value.trim();
+            let p = document.getElementById('pIp').value.trim();
+            let isClash = document.getElementById('clashMode').checked;
+            let path = p ? "/proxyip=" + p : "/";
+            const search = new URLSearchParams();
+            search.set('uuid', UUID);
+            search.set('encryption', 'none');
+            search.set('security', 'tls');
+            search.set('sni', host);
+            search.set('alpn', 'h3');
+            search.set('fp', 'random');
+            search.set('allowInsecure', '1');
+            search.set('type', 'ws');
+            search.set('host', host);
+            search.set('path', path);
+            let finalUrl = \`https://\${base}/sub?\${search.toString()}\`;
+            if (isClash) {
+                let subUrl = CONVERTER + "/sub?target=clash&url=" + encodeURIComponent(finalUrl) + "&emoji=true&list=false&sort=false";
+                document.getElementById('finalLink').value = subUrl;
+            } else {
+                document.getElementById('finalLink').value = finalUrl;
+            }
+        }
+
+        function toggleClash() { updateLink(); }
+
+        function copyId(id) {
+            const el = document.getElementById(id);
+            el.select();
+            navigator.clipboard.writeText(el.value).then(() => {
+                const t = document.getElementById('toast');
+                t.style.opacity=1;
+                setTimeout(() => t.style.opacity=0, 2000);
+            });
+        }
+
+        function logout() {
+            document.cookie = "auth=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+            sessionStorage.removeItem("is_active");
+            location.reload();
+        }
+
+        // 初始化
+        updateStats();
+        loadLogs();
+        loadWhitelist();
+        updateLink();
+        setInterval(loadLogs, 5000);
+    </script>
 </body>
 </html>`;
 }
